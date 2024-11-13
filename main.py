@@ -6,7 +6,7 @@ async def main():
     env = Environment(size=10)
 
     #responder_position = [0, 0]
-    #responder_agent = ResponderAgent("responder@localhost", "password", responder_position)
+    #responder_agent = ResponderAgent("responder@localhost", "password", responder_position, env)
     #await responder_agent.start()
 
     #civilian_position = [8, 7]
@@ -29,14 +29,21 @@ async def main():
     #for _ in range(5):  # Exemplo de 5 tentativas de bloqueio
     #    env.random_blockage()
 
-    await asyncio.sleep(15)
-    #await responder_agent.stop()
-    #await civilian_agent.stop()
-    await supply_vehicle.stop()
-    await shelter.stop()
+    #await asyncio.sleep(8)
+    #print("Criando bloqueios dinâmicos no ambiente...")
+    #env.random_blockage()
+    #env.city_map[5][5] = 0
 
-    #env.move_agent(supply_vehicle_position, supply_vehicle.position, 7)
-    #print(f"Posição do veiculo é: {supply_vehicle.position} ")
+    # Aguarda 8 segundos e reduz o nível de água do shelter
+    await asyncio.sleep(8)
+    print("Reduzindo o nível de água do Shelter...")
+    shelter.agua = 20  # Reduz para abaixo do limite de 30, acionando a solicitação
+
+    # Aguarda mais alguns segundos para permitir que o veículo processe a solicitação
+    await asyncio.sleep(10)
+
+    await shelter.stop()
+    await supply_vehicle.stop()
     env.print_city_map()
 
 if __name__ == "__main__":
