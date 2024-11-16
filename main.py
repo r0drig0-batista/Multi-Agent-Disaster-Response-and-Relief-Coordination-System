@@ -13,12 +13,21 @@ async def main():
     #civilian_agent = CivilianAgent("civilian_agent@localhost", "password", civilian_position)
     #await civilian_agent.start()
 
-    supply_vehicle_position = [0, 0]
-    supply_vehicle = SupplyVehicleAgent("supply_vehicle@localhost", "password", supply_vehicle_position, env)
-    await supply_vehicle.start()
+    #supply_vehicle_position = [0, 0]
+    #supply_vehicle = SupplyVehicleAgent("supply_vehicle@localhost", "password", supply_vehicle_position, env)
+    #await supply_vehicle.start()
+
+    supply_vehicle_positions = [[0, 0], [9, 9], [2, 3]]  # Exemplo de posições iniciais para os vehicles
+    supply_vehicles = []
+
+    for i, position in enumerate(supply_vehicle_positions, start=1):
+        vehicle_jid = f"supply_vehicle{i}@localhost"
+        supply_vehicle = SupplyVehicleAgent(vehicle_jid, "password", position, env)
+        await supply_vehicle.start()
+        supply_vehicles.append(supply_vehicle)
 
     shelter_position = [5, 6]
-    shelter = ShelterAgent("shelter@localhost", "password", shelter_position)
+    shelter = ShelterAgent("shelter@localhost", "password", shelter_position, len(supply_vehicle_positions))
     await shelter.start()
 
     #print(f"Posição do veiculo é: {supply_vehicle.position} ")
@@ -43,7 +52,8 @@ async def main():
     await asyncio.sleep(15)
 
     await shelter.stop()
-    await supply_vehicle.stop()
+    for vehicle in supply_vehicles:
+        await vehicle.stop()
     env.print_city_map()
 
 if __name__ == "__main__":

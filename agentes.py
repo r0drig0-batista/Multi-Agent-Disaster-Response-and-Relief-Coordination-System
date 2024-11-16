@@ -1,3 +1,5 @@
+import time
+
 from spade.agent import Agent
 from spade.behaviour import CyclicBehaviour, OneShotBehaviour
 from spade.message import Message
@@ -150,6 +152,11 @@ class CivilianAgent(Agent):
         print(f"Civilian movido para {self.position}")
 
 
+from spade.agent import Agent
+from spade.behaviour import CyclicBehaviour
+from spade.message import Message
+import asyncio
+
 class SupplyVehicleAgent(Agent):
     def __init__(self, jid, password, position, environment):
         super().__init__(jid, password)
@@ -168,30 +175,39 @@ class SupplyVehicleAgent(Agent):
         async def run(self):
             print("Supply Vehicle aguardando pedidos de recursos...")
 
-            # Recebe a mensagem de solicitação de recursos
+            # Recebe a mensagem de solicitação de recursos via broadcast
             msg = await self.receive(timeout=10)
+            #print(msg)
             if msg and msg.get_metadata("performative") == "request":
-                print(f"Pedido recebido do Shelter: {msg.body}")
+                print(f"Pedido de broadcast recebido do Shelter: {msg.body}")
 
                 # Extrai o tipo e quantidade do recurso solicitado
                 try:
                     recurso, quantidade, posicao_shelter = self.parse_request(msg.body)
-                    print(f"Solicitação de {quantidade} unidades de {recurso} para o shelter em {posicao_shelter}")
+                    print(f"Pedido de {quantidade} unidades de {recurso} para o shelter em {posicao_shelter}")
 
-                    # Verifica se o veículo tem recurso suficiente
+                    # Responde apenas se tiver capacidade suficiente
                     if self.agent.recursos[recurso] >= quantidade:
-                        # Movimenta-se até o Shelter e entrega o recurso
-                        await self.deliver_supplies(recurso, quantidade, posicao_shelter)
-                    else:
-                        print(f"Recursos insuficientes para atender o pedido de {recurso}.")
+                        # Envia uma resposta com a posição do vehicle
+                        response = Message(to=str(msg.sender))
+                        response.body = f"resposta {self.agent.position} {recurso} {quantidade}"
+                        response.set_metadata("performative", "response")
+                        await self.send(response)
+                        print(f"{self.agent.jid} enviou sua posição para o Shelter.")
+
                 except Exception as e:
                     print(f"Erro ao processar o pedido: {e}")
+
+            # Recebe o pedido de confirmação direto do shelter para a entrega
+            elif msg and msg.get_metadata("performative") == "confirm":
+                recurso, quantidade, posicao_shelter = self.parse_request(msg.body)
+                print(f"{self.agent.jid} recebeu confirmação para entregar {quantidade} de {recurso}.")
+                await self.deliver_supplies(recurso, quantidade, posicao_shelter, str(msg.sender))
 
         def parse_request(self, body):
             """Extrai o tipo de recurso, quantidade e posição do Shelter da mensagem."""
             try:
                 parts = body.split()
-                #print("Parts: ", parts)  # Para depuração, mostra as partes da mensagem dividida
                 recurso = parts[1]  # Segundo elemento é o recurso
                 quantidade = int(parts[2])  # Terceiro elemento é a quantidade
                 posicao_shelter = eval(" ".join(parts[3:]))
@@ -199,7 +215,7 @@ class SupplyVehicleAgent(Agent):
             except Exception as e:
                 raise ValueError(f"Erro ao interpretar a mensagem: {e}")
 
-        async def deliver_supplies(self, recurso, quantidade, posicao_shelter):
+        async def deliver_supplies(self, recurso, quantidade, posicao_shelter, shelter_jid):
             """Move o vehicle até o shelter e entrega o recurso."""
             # Calcula o caminho até o Shelter
             path = a_star(self.agent.environment, tuple(self.agent.position), tuple(posicao_shelter))
@@ -209,18 +225,24 @@ class SupplyVehicleAgent(Agent):
 
             # Segue o caminho até o Shelter
             for next_position in path[1:]:
+                if next_position == tuple(posicao_shelter):
+                    self.agent.environment.move_agent(tuple(self.agent.position), next_position,
+                                                      agent_type=8)  # Representando o Vehicle
+                    self.agent.update_position(next_position)
+                    break
+
                 if self.agent.environment.is_road_free(next_position):
                     self.agent.environment.move_agent(tuple(self.agent.position), next_position,
                                                       agent_type=8)  # Representando o Vehicle
                     self.agent.update_position(next_position)
-                    print(f"Vehicle movido para {next_position}")
+                    #print(f"Vehicle movido para {next_position}")
                 else:
                     print(f"Caminho bloqueado em {next_position}. Recalculando caminho...")
                     path = a_star(self.agent.environment, tuple(self.agent.position), posicao_shelter)
                     if not path:
                         print("Nenhum caminho alternativo encontrado!")
                         return
-                    await self.deliver_supplies(recurso, quantidade, posicao_shelter)  # Tenta seguir o novo caminho
+                    await self.deliver_supplies(recurso, quantidade, posicao_shelter,shelter_jid)  # Tenta seguir o novo caminho
                     return
                 await asyncio.sleep(1)  # Simula o movimento
 
@@ -228,8 +250,9 @@ class SupplyVehicleAgent(Agent):
             self.agent.recursos[recurso] -= quantidade
 
             # Envia confirmação de entrega para o Shelter
-            reply = Message(to=str(msg.sender))
+            reply = Message(to=shelter_jid)
             reply.body = f"Entrega de {quantidade} unidades de {recurso} realizada."
+            reply.set_metadata("performative", "confirm")
             await self.send(reply)
 
     async def setup(self):
@@ -242,10 +265,13 @@ class SupplyVehicleAgent(Agent):
         print(f"SupplyVehicle movido para {self.position}")
 
 
+
 class ShelterAgent(Agent):
-    def __init__(self, jid, password, position):
+    def __init__(self, jid, password, position, max_vehicles=20):
         super().__init__(jid, password)
         self.position = position
+        self.max_vehicles = max_vehicles
+
 
         # Atributos de recursos
         self.agua = 100
@@ -267,62 +293,137 @@ class ShelterAgent(Agent):
             "bens": False
         }
 
+        self.vehicle_positions = {}
+
     class ResourceCheckBehaviour(CyclicBehaviour):
         async def run(self):
             print("Verificando níveis de recursos...")
 
             # Verifica cada recurso e solicita apenas se abaixo do limite e ainda não solicitado
             if self.agent.agua < self.agent.limite_agua and not self.agent.solicitado["agua"]:
-                await self.request_supplies("agua", self.agent.limite_agua - self.agent.agua)
                 self.agent.solicitado["agua"] = True  # Marca como solicitado
+                await self.start_request_supplies_behaviour("agua", self.agent.limite_agua - self.agent.agua)
 
             if self.agent.comida < self.agent.limite_comida and not self.agent.solicitado["comida"]:
-                await self.request_supplies("comida", self.agent.limite_comida - self.agent.comida)
                 self.agent.solicitado["comida"] = True  # Marca como solicitado
+                await self.start_request_supplies_behaviour("comida", self.agent.limite_comida - self.agent.comida)
 
             if self.agent.medicamentos < self.agent.limite_medicamentos and not self.agent.solicitado["medicamentos"]:
-                await self.request_supplies("medicamentos", self.agent.limite_medicamentos - self.agent.medicamentos)
                 self.agent.solicitado["medicamentos"] = True  # Marca como solicitado
+                await self.start_request_supplies_behaviour("medicamentos",
+                                                            self.agent.limite_medicamentos - self.agent.medicamentos)
 
             if self.agent.bens < self.agent.limite_bens and not self.agent.solicitado["bens"]:
-                await self.request_supplies("bens", self.agent.limite_bens - self.agent.bens)
                 self.agent.solicitado["bens"] = True  # Marca como solicitado
+                await self.start_request_supplies_behaviour("bens", self.agent.limite_bens - self.agent.bens)
 
             await asyncio.sleep(5)  # Aguarda alguns segundos antes de verificar novamente
 
-        async def request_supplies(self, item, quantidade):
-            """Envia uma solicitação de suprimentos para o Supply Vehicle Agent."""
-            print(f"Solicitando {quantidade} unidades de {item} ao Vehicle...")
+        async def start_request_supplies_behaviour(self, item, quantidade):
+            """Inicia o RequestSuppliesBehaviour para o recurso especificado."""
+            print(f"Recurso {item} abaixo do limite. Iniciando RequestSuppliesBehaviour...")
+            behaviour = self.agent.RequestSuppliesBehaviour(item, quantidade)
+            self.agent.add_behaviour(behaviour)
 
-            vehicle_jid = "supply_vehicle@localhost"  # Substitua pelo JID do Supply Vehicle
-            msg = Message(to=vehicle_jid)
-            msg.body = f"pedido {item} {quantidade} {self.agent.position}"
-            msg.set_metadata("performative", "request")
+    class RequestSuppliesBehaviour(OneShotBehaviour):
+        def __init__(self, item, quantidade):
+            super().__init__()
+            self.item = item
+            self.quantidade = quantidade
+            self.responses = {}  # Armazena as respostas dos veículos
+
+        async def run(self):
+            print(f"Enviando pedido de {self.item} ({self.quantidade} unidades) para os veículos...")
+
+            # Envia broadcast para todos os veículos
+            for i in range(1, self.agent.max_vehicles + 1):
+                vehicle_jid = f"supply_vehicle{i}@localhost"  # Convenção de nomes para os veículos
+                msg = Message(to=vehicle_jid)
+                msg.body = f"pedido {self.item} {self.quantidade} {self.agent.position}"
+                msg.set_metadata("performative", "request")
+                await self.send(msg)
+                print(f"Pedido de {self.item} enviado para {vehicle_jid}.")
+
+            # Aguarda respostas dos veículos durante o timeout
+            await self.collect_responses(timeout=5)
+
+            # Processa as respostas e escolhe o veículo mais próximo
+            await self.process_responses()
+
+        async def collect_responses(self, timeout):
+            print(f"Aguardando respostas dos veículos por {timeout} segundos...")
+            start_time = time.time()
+
+            while time.time() - start_time < timeout:
+                msg = await self.receive(timeout=1)  # Verifica mensagens com pequenos intervalos
+                if msg and msg.get_metadata("performative") == "response":
+                    print(f"Resposta recebida de {msg.sender}: {msg.body}")
+
+                    # Processa a mensagem e armazena a resposta
+                    parts = msg.body.split()
+                    position_str = f"{parts[1]} {parts[2]}"
+                    vehicle_position = eval(position_str)  # Substituir por json.loads no futuro
+                    self.responses[str(msg.sender)] = {
+                        "position": vehicle_position,
+                        "item": parts[3],
+                        "quantidade": int(parts[4]),
+                    }
+
+        async def process_responses(self):
+            if not self.responses:
+                print("Nenhuma resposta recebida dentro do timeout.")
+                return
+
+            # Seleciona o veículo mais próximo
+            closest_vehicle = self.select_closest_vehicle()
+            if closest_vehicle:
+                vehicle_info = self.responses[closest_vehicle]
+                print(f"Veículo mais próximo selecionado: {closest_vehicle}")
+                await self.send_direct_request(
+                    vehicle_id=closest_vehicle,
+                    item=vehicle_info["item"],
+                    quantidade=vehicle_info["quantidade"],
+                )
+
+        def select_closest_vehicle(self):
+            min_distance = float("inf")
+            closest_vehicle = None
+
+            for vehicle_id, info in self.responses.items():
+                position = info["position"]
+                distance = abs(position[0] - self.agent.position[0]) + abs(position[1] - self.agent.position[1])
+                if distance < min_distance:
+                    min_distance = distance
+                    closest_vehicle = vehicle_id
+
+            return closest_vehicle
+
+        async def send_direct_request(self, vehicle_id, item, quantidade):
+            msg = Message(to=vehicle_id)
+            msg.body = f"pedido_confirmado {item} {quantidade} {self.agent.position}"
+            msg.set_metadata("performative", "confirm")
             await self.send(msg)
-            print(f"Pedido de {item} enviado para o Vehicle.")
+            print(f"Pedido direto enviado para {vehicle_id}.")
 
     async def setup(self):
         print("Shelter Agent iniciado")
+
         # Adiciona o comportamento de verificação de recursos
         self.resource_check_behaviour = self.ResourceCheckBehaviour()
         self.add_behaviour(self.resource_check_behaviour)
 
-    def atualizar_recurso(self, item, quantidade):
-        """Atualiza o nível de um recurso e libera a solicitação pendente se reabastecido."""
-        if item == "agua":
+    def update_resource(self, recurso, quantidade):
+        """Atualiza o nível do recurso e libera a solicitação pendente se reabastecido."""
+        if recurso == "agua":
             self.agua += quantidade
-            if self.agua >= self.limite_agua:
-                self.solicitado["agua"] = False  # Libera nova solicitação quando reabastecido
-        elif item == "comida":
+            self.solicitado["agua"] = False  # Libera nova solicitação quando reabastecido
+        elif recurso == "comida":
             self.comida += quantidade
-            if self.comida >= self.limite_comida:
-                self.solicitado["comida"] = False
-        elif item == "medicamentos":
+            self.solicitado["comida"] = False
+        elif recurso == "medicamentos":
             self.medicamentos += quantidade
-            if self.medicamentos >= self.limite_medicamentos:
-                self.solicitado["medicamentos"] = False
-        elif item == "bens":
+            self.solicitado["medicamentos"] = False
+        elif recurso == "bens":
             self.bens += quantidade
-            if self.bens >= self.limite_bens:
-                self.solicitado["bens"] = False
-        print(f"Recurso {item} atualizado para {getattr(self, item)}")
+            self.solicitado["bens"] = False
+        print(f"{recurso.capitalize()} atualizado para {getattr(self, recurso)}")
