@@ -3,21 +3,11 @@ from agentes import ResponderAgent, CivilianAgent, SupplyVehicleAgent, ShelterAg
 from ambiente import Environment
 
 async def main():
+    # Inicializar o ambiente
     env = Environment(size=10)
 
-    #responder_position = [0, 0]
-    #responder_agent = ResponderAgent("responder@localhost", "password", responder_position, env)
-    #await responder_agent.start()
-
-    #civilian_position = [8, 7]
-    #civilian_agent = CivilianAgent("civilian_agent@localhost", "password", civilian_position)
-    #await civilian_agent.start()
-
-    #supply_vehicle_position = [0, 0]
-    #supply_vehicle = SupplyVehicleAgent("supply_vehicle@localhost", "password", supply_vehicle_position, env)
-    #await supply_vehicle.start()
-
-    supply_vehicle_positions = [[0, 0], [9, 9], [2, 3]]  # Exemplo de posições iniciais para os vehicles
+    # Criar veículos de suprimento
+    supply_vehicle_positions = [[0, 0], [9, 9], [2, 3]]
     supply_vehicles = []
 
     for i, position in enumerate(supply_vehicle_positions, start=1):
@@ -26,36 +16,54 @@ async def main():
         await supply_vehicle.start()
         supply_vehicles.append(supply_vehicle)
 
+    # Criar o abrigo
     shelter_position = [5, 6]
     shelter = ShelterAgent("shelter@localhost", "password", shelter_position, len(supply_vehicle_positions))
     await shelter.start()
 
-    #print(f"Posição do veiculo é: {supply_vehicle.position} ")
-    #env.move_agent(supply_vehicle_position, supply_vehicle.position, 7)  # Atualiza no mapa
-    #responder_agent.update_position(supply_vehicle_position)  # Atualiza no agente
+    # Imprimir o estado inicial do mapa
+    print("\nMapa inicial da cidade:")
+    env.print_city_map()
 
-    # Criar bloqueios de forma aleatória durante a execução
-    #for _ in range(5):  # Exemplo de 5 tentativas de bloqueio
-    #    env.random_blockage()
+    print("\nIniciando simulação de 60 segundos...")
 
-    #await asyncio.sleep(8)
-    #print("Criando bloqueios dinâmicos no ambiente...")
-    #env.random_blockage()
-    #env.city_map[5][5] = 0
+    # **Evento 1**: Aos 10 segundos, aparecem 2 `Civilian Agents`
+    await asyncio.sleep(10)
+    print("\n[Evento] Aos 10 segundos: Aparecem 2 novos Civilian Agents")
+    civilian1_position = [8, 7]
+    civilian2_position = [6, 3]
+    civilian1 = CivilianAgent("civilian1@localhost", "password", civilian1_position)
+    civilian2 = CivilianAgent("civilian2@localhost", "password", civilian2_position)
+    await civilian1.start()
+    await civilian2.start()
+    env.move_agent(civilian1_position, civilian1_position, 4)  # 4 representa `Civilian Agent`
+    env.move_agent(civilian2_position, civilian2_position, 4)
 
-    # Aguarda 8 segundos e reduz o nível de água do shelter
-    await asyncio.sleep(8)
-    print("Reduzindo o nível de água do Shelter...")
-    shelter.agua = 20  # Reduz para abaixo do limite de 30, acionando a solicitação
 
-    # Aguarda mais alguns segundos para permitir que o veículo processe a solicitação
-    await asyncio.sleep(15)
+    # Atualizar o mapa após surgirem os civis
+    env.print_city_map()
 
+    # **Evento 2**: Aos 30 segundos, o shelter esgota os recursos
+    await asyncio.sleep(20)  # Total: 10 + 20 = 30 segundos
+    print("\n[Evento] Aos 30 segundos: O Shelter esgota seus recursos")
+    shelter.agua = 0
+    shelter.comida = 0
+    print("O Shelter está agora sem recursos de água e comida.")
+
+    # Esperar até o fim da simulação (60 segundos)
+    await asyncio.sleep(30)  # Total: 30 + 30 = 60 segundos
+    print("\nFim da simulação de 60 segundos")
+
+    # Parar todos os agentes
     await shelter.stop()
+    await civilian1.stop()
+    await civilian2.stop()
     for vehicle in supply_vehicles:
         await vehicle.stop()
+
+    # Imprimir estado final do mapa
+    print("\nEstado final do mapa:")
     env.print_city_map()
 
 if __name__ == "__main__":
     asyncio.run(main())
-
