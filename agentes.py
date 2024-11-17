@@ -163,7 +163,8 @@ class SupplyVehicleAgent(Agent):
             "agua": 200,
             "comida": 200,
             "medicamentos": 100,
-            "bens": 100
+            "bens": 100,
+            "combustivel": 30
         }
 
     class SupplyBehaviour(CyclicBehaviour):
@@ -239,12 +240,14 @@ class SupplyVehicleAgent(Agent):
                     self.agent.environment.move_agent(tuple(self.agent.position), next_position,
                                                       agent_type=8)  # Representando o Vehicle
                     self.agent.update_position(next_position)
+                    self.agent.recursos["combustivel"] -= 1
                     break
 
                 if self.agent.environment.is_road_free(next_position):
                     self.agent.environment.move_agent(tuple(self.agent.position), next_position,
                                                       agent_type=8)  # Representando o Vehicle
                     self.agent.update_position(next_position)
+                    self.agent.recursos["combustivel"] -= 1
                     #print(f"Vehicle movido para {next_position}")
                 else:
                     print(f"Caminho bloqueado em {next_position}. Recalculando caminho...")
@@ -258,6 +261,7 @@ class SupplyVehicleAgent(Agent):
 
             print(f"Vehicle chegou ao shelter e entregou {quantidade} unidades de {recurso}.")
             self.agent.recursos[recurso] -= quantidade
+            #print("recursos depois de perder", self.agent.recursos[recurso])
 
             # Envia confirmação de entrega para o Shelter
             reply = Message(to=shelter_jid)
@@ -345,11 +349,23 @@ class ShelterAgent(Agent):
                 print(f"Pedido de {recurso} enviado para {vehicle_jid} com ID {unique_id}.")
 
     class CentralizedResponseCollector(CyclicBehaviour):
+        def __init__(self):
+            super().__init__()
+            self.response_collection_start = None
+            self.collected_responses = {}
+
         async def run(self):
+            """Coleta e organiza respostas temporariamente."""
+            if not self.response_collection_start:
+                # Inicia a coleta quando necessário
+                self.response_collection_start = time.time()
+                self.collected_responses = {}
+
             """Recebe e organiza mensagens de resposta."""
             msg = await self.receive(timeout=1)  # Verifica mensagens com timeout
+            #print("MSG: ", msg)
             if msg:
-                print("Recebu msg: ", msg.body)
+                #print("Recebu msg: ", msg.body)
                 # Processar mensagem de confirmação
                 if msg.get_metadata("performative") == "confirm":
                     print(f"Confirmação recebida de {msg.sender}: {msg.body}")
@@ -384,10 +400,10 @@ class ShelterAgent(Agent):
                         print(f"Recurso {recurso} já foi atendido. Ignorando resposta.")
                         return
 
-                    if recurso not in self.agent.vehicle_positions:
-                        self.agent.vehicle_positions[recurso] = []
+                    if recurso not in self.collected_responses:
+                        self.collected_responses[recurso] = []
 
-                    self.agent.vehicle_positions[recurso].append({
+                    self.collected_responses[recurso].append({
                         "vehicle_id": str(msg.sender),
                         "position": vehicle_position,
                         "quantidade": quantidade,
@@ -395,55 +411,85 @@ class ShelterAgent(Agent):
                     #print(f"Resposta recebida e registrada: {msg.body}")
 
                     # Processar a melhor resposta diretamente
-                    await self.process_responses(recurso)
 
-        async def process_responses(self, recurso):
-            """Processa as respostas para um recurso específico."""
-            print(f"Aguardando respostas para o recurso {recurso} por 5 segundos...")
-            await asyncio.sleep(5)  # Aguardar 5 segundos para coletar todas as respostas
+            # Verifica se o tempo de coleta expirou (ex.: 5 segundos)
+            if self.response_collection_start and time.time() - self.response_collection_start > 10:
+                if self.collected_responses:  # Verifica se não há respostas coletadas
+                    print(f"Processando respostas coletadas para os recursos: {list(self.collected_responses.keys())}")
+                    await self.process_responses()
+                self.response_collection_start = None  # Reseta a coleta
 
-            if not self.agent.vehicle_positions.get(recurso):
-                print(f"Nenhuma resposta válida para {recurso}.")
-                return
-            '''
+        async def process_responses(self):
+
+            # Imprime as respostas coletadas para análise
+            #print(f"Respostas coletadas para {recurso}: {responses}")
+            #print("COLLECTED: ", self.collected_responses)
+
             # Identificar veículos multirrecursos
             multi_resource_vehicles = self.find_multi_resource_vehicles()
 
-            # Apenas imprime os veículos multirrecursos por enquanto
-            if multi_resource_vehicles:
-                print(f"Veículos multirrecursos encontrados: {multi_resource_vehicles}")
-            else:
-                print("Nenhum veículo multirrecursos encontrado.")
-            '''
-            # Seleciona o veículo mais próximo
-            closest_vehicle = self.select_closest_vehicle(self.agent.vehicle_positions[recurso])
-            if closest_vehicle:
-                print(f"Veículo mais próximo selecionado para {recurso}: {closest_vehicle['vehicle_id']}")
-                await self.send_direct_request(
-                    vehicle_id=closest_vehicle["vehicle_id"],
-                    item=recurso,
-                    quantidade=closest_vehicle["quantidade"],
-                )
-                # Marca o recurso como atendido
-                self.agent.resources_pending[recurso] = False
-                print(f"Recurso {recurso} marcado como atendido.")
+            print(f"Veículos multirrecursos encontrados: {multi_resource_vehicles}")
+            best_choice = self.evaluate_efficiency(multi_resource_vehicles, self.collected_responses)
+
+            print("BEST CHOICE: ", best_choice)
+
+            if best_choice["type"] == "multi":
+                vehicle = best_choice["vehicle"]
+                print(f"Usando veículo multirrecursos: {vehicle['vehicle_id']}")
+
+                # Enviar pedidos separados para cada recurso atendido pelo veículo multirrecursos
+                for res in vehicle["recursos"]:
+                    #print("RESSSSSS: ", res)
+                    quantidade = self.collected_responses[res][0][
+                        "quantidade"]  # Usa a quantidade solicitada para o recurso
+                    await self.send_direct_request(
+                        vehicle_id=vehicle["vehicle_id"],
+                        item=res,
+                        quantidade=quantidade,
+                    )
+                    # Marca o recurso como atendido
+                    self.agent.resources_pending[res] = False
+                    print(f"Recurso {res} marcado como atendido pelo veículo multirrecursos.")
+                return
+
+            if best_choice["type"] == "separate":
+                print("Usando veículos separados para atender os recursos.")
+
+                # Itera sobre os veículos selecionados para cada recurso
+                for vehicle in best_choice["vehicles"]:
+                    # Extrai o recurso associado ao veículo (se houver um campo específico para isso)
+                    resource = next((res for res, responses in self.collected_responses.items()
+                                     if any(v["vehicle_id"] == vehicle["vehicle_id"] for v in responses)), None)
+
+                    if resource:
+                        quantidade = vehicle["quantidade"]  # Usa a quantidade fornecida pelo veículo
+                        await self.send_direct_request(
+                            vehicle_id=vehicle["vehicle_id"],
+                            item=resource,
+                            quantidade=quantidade,
+                        )
+                        # Marca o recurso como atendido
+                        self.agent.resources_pending[resource] = False
+                        print(f"Recurso {resource} marcado como atendido pelo veículo {vehicle['vehicle_id']}.")
+                    else:
+                        print(f"Recurso não encontrado para o veículo {vehicle['vehicle_id']}.")
 
         def find_multi_resource_vehicles(self):
             """
-            Identifica veículos que podem atender múltiplos recursos.
-            Retorna uma lista de veículos multirrecursos.
+            Identifica veículos que aparecem em mais de um recurso.
+            Retorna uma lista de veículos multirrecursos e os recursos atendidos.
             """
             vehicle_resource_map = {}
 
-            # Mapeia cada veículo aos recursos que ele pode fornecer
-            for recurso, vehicles in self.agent.vehicle_positions.items():
+            # Itera por cada recurso e seus veículos associados
+            for recurso, vehicles in self.collected_responses.items():
                 for vehicle in vehicles:
                     vehicle_id = vehicle["vehicle_id"]
                     if vehicle_id not in vehicle_resource_map:
                         vehicle_resource_map[vehicle_id] = []
                     vehicle_resource_map[vehicle_id].append(recurso)
 
-            # Filtra veículos que oferecem mais de um recurso
+            # Filtra veículos que atendem a mais de um recurso
             multi_resource_vehicles = [
                 {"vehicle_id": vehicle_id, "recursos": recursos}
                 for vehicle_id, recursos in vehicle_resource_map.items()
@@ -451,6 +497,50 @@ class ShelterAgent(Agent):
             ]
 
             return multi_resource_vehicles
+
+        def evaluate_efficiency(self, multi_resource_vehicles, collected_responses):
+            """
+            Compara a eficiência de usar veículos multirrecursos contra veículos separados.
+            Retorna a melhor opção.
+            """
+            best_choice = None
+            min_distance = float("inf")
+
+            # Opção 1: Usar veículos multirrecursos
+            for vehicle in multi_resource_vehicles:
+                vehicle_id = vehicle["vehicle_id"]
+                distance = self.calculate_distance(vehicle_id)
+
+                # Soma a quantidade de recursos atendidos como um fator de eficiência
+                efficiency_score = distance / len(vehicle["recursos"])
+
+                if efficiency_score < min_distance:
+                    min_distance = efficiency_score
+                    best_choice = {"type": "multi", "vehicle": vehicle}
+
+            # Opção 2: Usar veículos separados para cada recurso
+            separate_vehicles = []
+            total_distance = 0
+
+            for recurso, vehicles in collected_responses.items():
+                closest_vehicle = self.select_closest_vehicle(vehicles)
+                if closest_vehicle:
+                    separate_vehicles.append(closest_vehicle)
+                    total_distance += self.calculate_distance(closest_vehicle["vehicle_id"])
+
+            if total_distance < min_distance:
+                best_choice = {"type": "separate", "vehicles": separate_vehicles}
+
+            return best_choice
+
+        def calculate_distance(self, vehicle_id):
+            """Calcula a distância entre o abrigo e um veículo."""
+            for recurso, vehicles in self.collected_responses.items():
+                for vehicle in vehicles:
+                    if vehicle["vehicle_id"] == vehicle_id:
+                        position = vehicle["position"]
+                        return abs(position[0] - self.agent.position[0]) + abs(position[1] - self.agent.position[1])
+            return float("inf")
 
         def select_closest_vehicle(self, vehicles):
             """Seleciona o veículo mais próximo."""
@@ -468,6 +558,11 @@ class ShelterAgent(Agent):
 
         async def send_direct_request(self, vehicle_id, item, quantidade):
             """Envia uma mensagem direta ao veículo selecionado."""
+
+            print("VehicleID: ", vehicle_id)
+            print("item: ", item)
+            print("quantidade: ", quantidade)
+
             msg = Message(to=vehicle_id)
             msg.body = f"pedido_confirmado {item} {quantidade} {self.agent.position}"
             msg.set_metadata("performative", "confirm")

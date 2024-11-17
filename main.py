@@ -7,15 +7,15 @@ async def main():
     env = Environment(size=10)
 
     # Criar veículos de suprimento
-    supply_vehicle_positions = [[0, 0], [9, 9], [2, 3], [7, 7]]
+    supply_vehicle_positions = [[1, 1], [3, 3], [9, 9], [6, 6]]
     supply_vehicles = []
 
     # Criar os veículos com os recursos especificados
     initial_resources = [
-        {"comida": 30, "agua": 0},  # Veículo 1
-        {"comida": 0, "agua": 60},  # Veículo 2
-        {"comida": 50, "agua": 40},   # Veículo 3
-        {"comida": 30, "agua": 50}  # Veículo 4
+        {"agua": 50, "comida": 0,  "medicamentos": 0, "bens": 0, "combustivel": 10},  # Veículo 1
+        {"agua": 0, "comida": 0, "medicamentos": 0, "bens": 0, "combustivel": 10},  # Veículo 2
+        {"agua": 0, "comida": 0, "medicamentos": 0, "bens": 0, "combustivel": 10},
+        {"agua": 0, "comida": 0, "medicamentos": 100, "bens": 0, "combustivel": 10}
     ]
 
     for i, (position, resources) in enumerate(zip(supply_vehicle_positions, initial_resources), start=1):
@@ -29,7 +29,7 @@ async def main():
         supply_vehicles.append(supply_vehicle)
 
     # Criar o abrigo
-    shelter_position = [5, 6]
+    shelter_position = [2, 2]
     shelter = ShelterAgent("shelter@localhost", "password", shelter_position, len(supply_vehicle_positions))
     await shelter.start()
 
@@ -63,20 +63,21 @@ async def main():
     await asyncio.sleep(5)  # Total: 10 + 20 = 30 segundos
     print("\n[Evento] Aos 30 segundos: O Shelter esgota seus recursos")
     shelter.agua = 0
-    #shelter.comida = 0
+    shelter.comida = 0
     print("O Shelter está agora sem recursos de água e comida.")
 
     # Esperar até o fim da simulação (60 segundos)
     await asyncio.sleep(20)  # Total: 30 + 30 = 60 segundos
     print(shelter.agua)
     print(shelter.comida)
-    print("\nvai reduzir agua a seguir")
+    print("\nvai reduzir medicamentos a seguir")
 
-    shelter.agua = 10
+    shelter.agua = 0
 
     await asyncio.sleep(20)
     print(shelter.agua)
     print(shelter.comida)
+    print(shelter.medicamentos)
     print("\nFim da simulação de 60 segundos")
 
     # Parar todos os agentes
