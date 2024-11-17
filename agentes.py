@@ -177,47 +177,58 @@ class SupplyVehicleAgent(Agent):
 
             # Recebe a mensagem de solicitação de recursos via broadcast
             msg = await self.receive(timeout=10)
-            if msg and msg.get_metadata("performative") == "request":
-                parts = msg.body.split()
-                unique_id = parts[-1]  # O último elemento é o ID
+            if msg:
 
-                if unique_id in self.processed_requests:
-                    print(f"Pedido já processado com ID {unique_id}: {msg.body}")
-                    return  # Ignora pedidos duplicados
+                origin = msg.get_metadata("origin")
 
-                self.processed_requests.add(unique_id)  # Marca o pedido como processado
-                print(f"Pedido de broadcast recebido do Shelter: {msg.body}")
+                if msg.get_metadata("performative") == "request":
+                    parts = msg.body.split()
+                    unique_id = parts[-1]  # O último elemento é o ID
 
-                # Extrai o tipo e quantidade do recurso solicitado
-                try:
-                    recurso, quantidade, posicao_shelter = self.parse_request(msg.body)
-                    print(f"Pedido de {quantidade} unidades de {recurso} para o shelter em {posicao_shelter}")
+                    if unique_id in self.processed_requests:
+                        print(f"Pedido já processado com ID {unique_id}: {msg.body}")
+                        return  # Ignora pedidos duplicados
 
-                    #print("agentrecursos: ", self.agent.recursos[recurso])
-                    #print("quantidade: ", quantidade)
+                    self.processed_requests.add(unique_id)  # Marca o pedido como processado
+                    print(f"Pedido de {origin} recebido: {msg.body}")
 
-                    # Responde apenas se tiver capacidade suficiente
-                    if self.agent.recursos[recurso] >= quantidade:
-                        # Envia uma resposta com a posição do vehicle
-                        response = Message(to=str(msg.sender))
-                        response.body = f"resposta {self.agent.position} {recurso} {quantidade}"
-                        response.set_metadata("performative", "response")
-                        await self.send(response)
-                        print(f"{self.agent.jid} enviou sua posição para o Shelter.")
+                    # Extrai o tipo e quantidade do recurso solicitado
+                    try:
+                        recurso, quantidade, posicao = self.parse_request(msg.body)
+                        print(f"Pedido de {quantidade} unidades de {recurso} vindo de {origin} em {posicao}")
 
-                except Exception as e:
-                    print(f"Erro ao processar o pedido: {e}")
+                        # Lógica para o pedido do abrigo (Shelter)
+                        if origin == "shelter":
+                            if self.agent.recursos[recurso] >= quantidade:
+                                response = Message(to=str(msg.sender))
+                                response.body = f"resposta {self.agent.position} {recurso} {quantidade}"
+                                response.set_metadata("performative", "response")
+                                await self.send(response)
+                                print(f"{self.agent.jid} respondeu ao abrigo com sua posição.")
 
-            # Recebe o pedido de confirmação direto do shelter para a entrega
-            elif msg and msg.get_metadata("performative") == "confirm":
-                recurso, quantidade, posicao_shelter = self.parse_request(msg.body)
-                print(f"{self.agent.jid} recebeu confirmação para entregar {quantidade} de {recurso}.")
-                await self.deliver_supplies(recurso, quantidade, posicao_shelter, str(msg.sender))
+                    except Exception as e:
+                            print(f"Erro ao processar o pedido: {e}")
+
+                # Recebe o pedido de confirmação direto do shelter para a entrega
+                if msg.get_metadata("performative") == "confirm":
+                    if origin == "depot":
+                        parts = msg.body.split()
+                        print("Parts: ", parts)
+                        recurso = parts[1]  # O último elemento é o ID
+                        quantidade = int(parts[2])
+                        self.agent.recursos[recurso] += quantidade
+                        print("Recurso de combustivel: ", self.agent.recursos["combustivel"])
+
+                    if origin == "shelter":
+                        recurso, quantidade, posicao_shelter = self.parse_request(msg.body)
+                        print(f"{self.agent.jid} recebeu confirmação para entregar {quantidade} de {recurso}.")
+                        await self.deliver_supplies(recurso, quantidade, posicao_shelter, str(msg.sender))
 
         def parse_request(self, body):
             """Extrai o tipo de recurso, quantidade e posição do Shelter da mensagem."""
             try:
                 parts = body.split()
+                print("PARTS: " ,parts)
                 recurso = parts[1]  # Segundo elemento é o recurso
                 quantidade = int(parts[2])  # Terceiro elemento é a quantidade
                 position_str = f"{parts[3]} {parts[4]}"
@@ -228,6 +239,11 @@ class SupplyVehicleAgent(Agent):
 
         async def deliver_supplies(self, recurso, quantidade, posicao_shelter, shelter_jid):
             """Move o vehicle até o shelter e entrega o recurso."""
+            if self.agent.recursos["combustivel"] <= 2:
+                print(f"{self.agent.jid} com combustível baixo. Retornando ao depósito para reabastecimento.")
+                await self.refill_at_depot()
+                return
+
             # Calcula o caminho até o Shelter
             path = a_star(self.agent.environment, tuple(self.agent.position), tuple(posicao_shelter))
             if not path:
@@ -268,6 +284,27 @@ class SupplyVehicleAgent(Agent):
             reply.body = f"Entrega de {quantidade} unidades de {recurso} realizada."
             reply.set_metadata("performative", "confirm")
             await self.send(reply)
+
+        async def refill_at_depot(self):
+            """Move o veículo até o depósito para reabastecimento."""
+            depot_position = [0, 0]  # Substitua pela posição real do depósito
+            path = a_star(self.agent.environment, tuple(self.agent.position), tuple(depot_position))
+            if not path:
+                print("Nenhum caminho encontrado para o depósito!")
+                return
+
+            for next_position in path[1:]:
+                if self.agent.environment.is_road_free(next_position):
+                    self.agent.environment.move_agent(tuple(self.agent.position), next_position, agent_type=8)
+                    self.agent.update_position(next_position)
+                    self.agent.recursos["combustivel"] -= 1
+                await asyncio.sleep(1)
+
+            print(f"{self.agent.jid} chegou ao depósito. Solicitando reabastecimento.")
+            msg = Message(to="depot@localhost")
+            msg.body = f"request combustivel {30}"  # Exemplo de solicitação
+            msg.set_metadata("performative", "request")
+            await self.send(msg)
 
     async def setup(self):
         print("Supply Vehicle Agent iniciado")
@@ -344,6 +381,7 @@ class ShelterAgent(Agent):
                 vehicle_jid = f"supply_vehicle{i}@localhost"
                 msg = Message(to=vehicle_jid)
                 msg.body = f"pedido {recurso} {quantidade} {self.agent.position} {unique_id}"  # Inclui o ID único
+                msg.set_metadata("origin", "shelter")  # Para pedidos do Shelter
                 msg.set_metadata("performative", "request")
                 await self.send(msg)
                 print(f"Pedido de {recurso} enviado para {vehicle_jid} com ID {unique_id}.")
@@ -566,6 +604,7 @@ class ShelterAgent(Agent):
             msg = Message(to=vehicle_id)
             msg.body = f"pedido_confirmado {item} {quantidade} {self.agent.position}"
             msg.set_metadata("performative", "confirm")
+            msg.set_metadata("origin", "shelter")  # Para pedidos do Shelter
             await self.send(msg)
             print(f"Pedido direto enviado para {vehicle_id}.")
 
@@ -603,3 +642,42 @@ class ShelterAgent(Agent):
             self.solicitado["bens"] = False
             self.resources_pending["bens"] = True
         print(f"{recurso.capitalize()} atualizado para {getattr(self, recurso)}")
+
+class DepotAgent(Agent):
+    def __init__(self, jid, password, position, initial_resources):
+        super().__init__(jid, password)
+        self.position = position
+        self.resources = initial_resources  # {"agua": 500, "comida": 500, ...}
+
+    class HandleRefillRequestsBehaviour(CyclicBehaviour):
+        async def run(self):
+            print("Depot aguardando solicitações de reabastecimento...")
+
+            msg = await self.receive(timeout=1)
+            if msg and msg.get_metadata("performative") == "request":
+                parts = msg.body.split()
+                recurso = parts[1]
+                quantidade = int(parts[2])
+                vehicle_jid = str(msg.sender)
+
+                if self.agent.resources[recurso] >= quantidade:
+                    self.agent.resources[recurso] -= quantidade
+                    print(f"Depot forneceu {quantidade} de {recurso} para {vehicle_jid}.")
+
+                    reply = Message(to=vehicle_jid)
+                    reply.body = f"resposta {recurso} {quantidade} fornecidos."
+                    reply.set_metadata("performative", "confirm")
+                    reply.set_metadata("origin", "depot")  # Para pedidos do Depot
+                    await self.send(reply)
+                else:
+                    print(f"Depot sem recursos suficientes de {recurso}.")
+                    reply = Message(to=vehicle_jid)
+                    reply.body = f"Recursos insuficientes de {recurso}."
+                    reply.set_metadata("performative", "refuse")
+                    reply.set_metadata("origin", "depot")  # Para pedidos do Depot
+                    await self.send(reply)
+
+    async def setup(self):
+        print(f"Depot iniciado na posição {self.position}. Recursos iniciais: {self.resources}")
+        self.add_behaviour(self.HandleRefillRequestsBehaviour())
+

@@ -1,5 +1,5 @@
 import asyncio
-from agentes import ResponderAgent, CivilianAgent, SupplyVehicleAgent, ShelterAgent
+from agentes import ResponderAgent, CivilianAgent, SupplyVehicleAgent, ShelterAgent, DepotAgent
 from ambiente import Environment
 
 async def main():
@@ -12,7 +12,7 @@ async def main():
 
     # Criar os veículos com os recursos especificados
     initial_resources = [
-        {"agua": 50, "comida": 0,  "medicamentos": 0, "bens": 0, "combustivel": 10},  # Veículo 1
+        {"agua": 50, "comida": 0,  "medicamentos": 0, "bens": 0, "combustivel": 2},  # Veículo 1
         {"agua": 0, "comida": 0, "medicamentos": 0, "bens": 0, "combustivel": 10},  # Veículo 2
         {"agua": 0, "comida": 0, "medicamentos": 0, "bens": 0, "combustivel": 10},
         {"agua": 0, "comida": 0, "medicamentos": 100, "bens": 0, "combustivel": 10}
@@ -27,6 +27,12 @@ async def main():
 
         await supply_vehicle.start()
         supply_vehicles.append(supply_vehicle)
+
+    # Criar o depósito central
+    depot_position = [0, 0]  # Posição inicial do depósito
+    depot_resources = {"agua": 500, "comida": 500, "medicamentos": 300, "bens": 200, "combustivel": 1000}
+    depot = DepotAgent("depot@localhost", "password", depot_position, depot_resources)
+    await depot.start()
 
     # Criar o abrigo
     shelter_position = [2, 2]
