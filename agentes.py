@@ -151,12 +151,6 @@ class CivilianAgent(Agent):
         self.position = new_position
         print(f"Civilian movido para {self.position}")
 
-
-from spade.agent import Agent
-from spade.behaviour import CyclicBehaviour
-from spade.message import Message
-import asyncio
-
 class SupplyVehicleAgent(Agent):
     def __init__(self, jid, password, position, environment):
         super().__init__(jid, password)
@@ -172,13 +166,21 @@ class SupplyVehicleAgent(Agent):
         }
 
     class SupplyBehaviour(CyclicBehaviour):
+        def __init__(self):
+            super().__init__()
+            self.processed_requests = set()  # Conjunto para rastrear pedidos já processados
+
         async def run(self):
             print("Supply Vehicle aguardando pedidos de recursos...")
 
             # Recebe a mensagem de solicitação de recursos via broadcast
             msg = await self.receive(timeout=10)
-            #print(msg)
             if msg and msg.get_metadata("performative") == "request":
+                if msg.body in self.processed_requests:
+                    print(f"Pedido já processado: {msg.body}")
+                    return  # Ignora pedidos duplicados
+
+                self.processed_requests.add(msg.body)  # Marca o pedido como processado
                 print(f"Pedido de broadcast recebido do Shelter: {msg.body}")
 
                 # Extrai o tipo e quantidade do recurso solicitado
@@ -295,6 +297,7 @@ class ShelterAgent(Agent):
 
         self.vehicle_positions = {}
 
+
     class ResourceCheckBehaviour(CyclicBehaviour):
         async def run(self):
             print("Verificando níveis de recursos...")
@@ -330,7 +333,12 @@ class ShelterAgent(Agent):
             super().__init__()
             self.item = item
             self.quantidade = quantidade
-            self.responses = {}  # Armazena as respostas dos veículos
+            self.responses = {  # Dicionário para organizar respostas por recurso
+                "agua": [],
+                "comida": [],
+                "medicamentos": [],
+                "bens": []
+            }
 
         async def run(self):
             print(f"Enviando pedido de {self.item} ({self.quantidade} unidades) para os veículos...")
@@ -351,50 +359,98 @@ class ShelterAgent(Agent):
             await self.process_responses()
 
         async def collect_responses(self, timeout):
+
+            '''
+            for behaviour in self.agent.behaviours:
+                print(f"Comportamento ativo: {type(behaviour).__name__}")
+            '''
+
             print(f"Aguardando respostas dos veículos por {timeout} segundos...")
             start_time = time.time()
+            received_messages = set()  # Conjunto para rastrear mensagens recebidas
 
             while time.time() - start_time < timeout:
                 msg = await self.receive(timeout=1)  # Verifica mensagens com pequenos intervalos
                 if msg and msg.get_metadata("performative") == "response":
+                    # Verifica se a mensagem já foi recebida
+                    if msg.body in received_messages:
+                        print(f"[DEBUG] Mensagem duplicada ignorada: {msg.body}")
+                        continue
+
+                    # Adiciona a mensagem ao conjunto de rastreamento
+                    received_messages.add(msg.body)
                     print(f"Resposta recebida de {msg.sender}: {msg.body}")
 
-                    # Processa a mensagem e armazena a resposta
+                    # Processa a mensagem e organiza por recurso
                     parts = msg.body.split()
                     position_str = f"{parts[1]} {parts[2]}"
                     vehicle_position = eval(position_str)  # Substituir por json.loads no futuro
-                    self.responses[str(msg.sender)] = {
-                        "position": vehicle_position,
-                        "item": parts[3],
-                        "quantidade": int(parts[4]),
-                    }
+                    recurso = parts[3]  # Identifica o recurso na mensagem
+                    quantidade = int(parts[4])
+
+                    # Armazena a resposta no dicionário correspondente ao recurso
+                    if recurso in self.responses:
+                        self.responses[recurso].append({
+                            "vehicle_id": str(msg.sender),
+                            "position": vehicle_position,
+                            "quantidade": quantidade,
+                        })
 
         async def process_responses(self):
-            if not self.responses:
-                print("Nenhuma resposta recebida dentro do timeout.")
+            if not self.responses[self.item]:
+                print(f"Nenhuma resposta para {self.item} recebida dentro do timeout.")
                 return
 
-            # Seleciona o veículo mais próximo
-            closest_vehicle = self.select_closest_vehicle()
+            # 2. Identificar veículos que atendem a múltiplos recursos
+            multi_resource_vehicles = self.find_multi_resource_vehicles()
+
+            # 3. Calcular eficiência de veículos separados x único veículo para múltiplos recursos
+            if multi_resource_vehicles:
+                print("Encontrados veículos que atendem a múltiplos recursos:")
+                for vehicle in multi_resource_vehicles:
+                    print(vehicle)
+                # Aqui você pode implementar uma lógica para decidir se vai usar esses veículos
+
+            closest_vehicle = self.select_closest_vehicle(self.responses[self.item])
             if closest_vehicle:
-                vehicle_info = self.responses[closest_vehicle]
-                print(f"Veículo mais próximo selecionado: {closest_vehicle}")
+                print(f"Veículo mais próximo selecionado para {self.item}: {closest_vehicle['vehicle_id']}")
                 await self.send_direct_request(
-                    vehicle_id=closest_vehicle,
-                    item=vehicle_info["item"],
-                    quantidade=vehicle_info["quantidade"],
+                    vehicle_id=closest_vehicle["vehicle_id"],
+                    item=self.item,
+                    quantidade=min(self.quantidade, closest_vehicle["quantidade"]),
                 )
 
-        def select_closest_vehicle(self):
+        def find_multi_resource_vehicles(self):
+            """Encontra veículos que oferecem múltiplos recursos."""
+            vehicle_resource_map = {}  # Mapeia vehicle_id -> [recursos]
+
+            # Percorre as respostas e cria o mapa
+            for recurso, vehicles in self.responses.items():
+                for vehicle in vehicles:
+                    vehicle_id = vehicle["vehicle_id"]
+                    if vehicle_id not in vehicle_resource_map:
+                        vehicle_resource_map[vehicle_id] = []
+                    vehicle_resource_map[vehicle_id].append(recurso)
+
+            # Filtra veículos que atendem a mais de um recurso
+            multi_resource_vehicles = [
+                {"vehicle_id": vehicle_id, "recursos": recursos}
+                for vehicle_id, recursos in vehicle_resource_map.items()
+                if len(recursos) > 1
+            ]
+
+            return multi_resource_vehicles
+
+        def select_closest_vehicle(self, vehicles):
             min_distance = float("inf")
             closest_vehicle = None
 
-            for vehicle_id, info in self.responses.items():
-                position = info["position"]
+            for vehicle in vehicles:
+                position = vehicle["position"]
                 distance = abs(position[0] - self.agent.position[0]) + abs(position[1] - self.agent.position[1])
                 if distance < min_distance:
                     min_distance = distance
-                    closest_vehicle = vehicle_id
+                    closest_vehicle = vehicle
 
             return closest_vehicle
 

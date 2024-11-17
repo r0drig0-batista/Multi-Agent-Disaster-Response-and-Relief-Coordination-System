@@ -7,12 +7,24 @@ async def main():
     env = Environment(size=10)
 
     # Criar veículos de suprimento
-    supply_vehicle_positions = [[0, 0], [9, 9], [2, 3]]
+    supply_vehicle_positions = [[0, 0], [9, 9], [2, 3], [7, 7]]
     supply_vehicles = []
 
-    for i, position in enumerate(supply_vehicle_positions, start=1):
+    # Criar os veículos com os recursos especificados
+    initial_resources = [
+        {"comida": 30, "agua": 0},  # Veículo 1
+        {"comida": 0, "agua": 0},  # Veículo 2
+        {"comida": 0, "agua": 0},   # Veículo 3
+        {"comida": 30, "agua": 50}  # Veículo 4
+    ]
+
+    for i, (position, resources) in enumerate(zip(supply_vehicle_positions, initial_resources), start=1):
         vehicle_jid = f"supply_vehicle{i}@localhost"
         supply_vehicle = SupplyVehicleAgent(vehicle_jid, "password", position, env)
+
+        # Configurar os recursos iniciais do veículo
+        supply_vehicle.recursos = resources
+
         await supply_vehicle.start()
         supply_vehicles.append(supply_vehicle)
 
@@ -28,7 +40,9 @@ async def main():
     print("\nIniciando simulação de 60 segundos...")
 
     # **Evento 1**: Aos 10 segundos, aparecem 2 `Civilian Agents`
-    await asyncio.sleep(10)
+    #await asyncio.sleep(10)
+
+    '''
     print("\n[Evento] Aos 10 segundos: Aparecem 2 novos Civilian Agents")
     civilian1_position = [8, 7]
     civilian2_position = [6, 3]
@@ -43,21 +57,21 @@ async def main():
     # Atualizar o mapa após surgirem os civis
     env.print_city_map()
 
+    '''
+
     # **Evento 2**: Aos 30 segundos, o shelter esgota os recursos
-    await asyncio.sleep(20)  # Total: 10 + 20 = 30 segundos
+    await asyncio.sleep(5)  # Total: 10 + 20 = 30 segundos
     print("\n[Evento] Aos 30 segundos: O Shelter esgota seus recursos")
     shelter.agua = 0
     shelter.comida = 0
     print("O Shelter está agora sem recursos de água e comida.")
 
     # Esperar até o fim da simulação (60 segundos)
-    await asyncio.sleep(30)  # Total: 30 + 30 = 60 segundos
+    await asyncio.sleep(20)  # Total: 30 + 30 = 60 segundos
     print("\nFim da simulação de 60 segundos")
 
     # Parar todos os agentes
     await shelter.stop()
-    await civilian1.stop()
-    await civilian2.stop()
     for vehicle in supply_vehicles:
         await vehicle.stop()
 
