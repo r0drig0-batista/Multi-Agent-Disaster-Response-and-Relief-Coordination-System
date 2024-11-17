@@ -13,8 +13,8 @@ async def main():
     # Criar os veículos com os recursos especificados
     initial_resources = [
         {"comida": 30, "agua": 0},  # Veículo 1
-        {"comida": 0, "agua": 0},  # Veículo 2
-        {"comida": 0, "agua": 0},   # Veículo 3
+        {"comida": 0, "agua": 60},  # Veículo 2
+        {"comida": 50, "agua": 40},   # Veículo 3
         {"comida": 30, "agua": 50}  # Veículo 4
     ]
 
@@ -63,11 +63,20 @@ async def main():
     await asyncio.sleep(5)  # Total: 10 + 20 = 30 segundos
     print("\n[Evento] Aos 30 segundos: O Shelter esgota seus recursos")
     shelter.agua = 0
-    shelter.comida = 0
+    #shelter.comida = 0
     print("O Shelter está agora sem recursos de água e comida.")
 
     # Esperar até o fim da simulação (60 segundos)
     await asyncio.sleep(20)  # Total: 30 + 30 = 60 segundos
+    print(shelter.agua)
+    print(shelter.comida)
+    print("\nvai reduzir agua a seguir")
+
+    shelter.agua = 10
+
+    await asyncio.sleep(20)
+    print(shelter.agua)
+    print(shelter.comida)
     print("\nFim da simulação de 60 segundos")
 
     # Parar todos os agentes
