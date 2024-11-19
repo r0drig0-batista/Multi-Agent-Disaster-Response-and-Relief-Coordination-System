@@ -7,15 +7,15 @@ async def main():
     env = Environment(size=10)
 
     # Criar veículos de suprimento
-    supply_vehicle_positions = [[1, 1], [3, 3], [9, 9], [6, 6]]
+    supply_vehicle_positions = [[4, 4], [5, 6], [7, 6], [4, 0]]
     supply_vehicles = []
 
     # Criar os veículos com os recursos especificados
     initial_resources = [
-        {"agua": 50, "comida": 0,  "medicamentos": 0, "bens": 0, "combustivel": 2},  # Veículo 1
-        {"agua": 0, "comida": 0, "medicamentos": 0, "bens": 0, "combustivel": 10},  # Veículo 2
-        {"agua": 0, "comida": 0, "medicamentos": 0, "bens": 0, "combustivel": 10},
-        {"agua": 0, "comida": 0, "medicamentos": 100, "bens": 0, "combustivel": 10}
+        {"agua_comida": 60,  "medicamentos": 60,  "combustivel": 100},  # Veículo 1
+        {"agua_comida": 0,  "medicamentos": 40,  "combustivel": 100},  # Veículo 2
+        {"agua_comida": 00,  "medicamentos": 20,  "combustivel": 100},
+        {"agua_comida": 00,  "medicamentos": 0,  "combustivel": 100}
     ]
 
     for i, (position, resources) in enumerate(zip(supply_vehicle_positions, initial_resources), start=1):
@@ -34,64 +34,49 @@ async def main():
     depot = DepotAgent("depot@localhost", "password", depot_position, depot_resources)
     await depot.start()
 
-    # Criar o abrigo
-    shelter_position = [2, 2]
-    shelter = ShelterAgent("shelter@localhost", "password", shelter_position, len(supply_vehicle_positions))
-    await shelter.start()
+    # Criar os abrigos com capacidades e posições diferentes
+    shelter1_position = [3, 4]
+    shelter1 = ShelterAgent("shelter1@localhost", "password", shelter1_position, len(supply_vehicle_positions))
+    await shelter1.start()
 
-    # Imprimir o estado inicial do mapa
+    shelter2_position = [5, 5]
+    shelter2 = ShelterAgent("shelter2@localhost", "password", shelter2_position, len(supply_vehicle_positions))
+    await shelter2.start()
+
+    # Atualiza o mapa para incluir os abrigos
+    env.move_agent(shelter1_position, shelter1_position, agent_type=5)  # Representa o Shelter 1
+    env.move_agent(shelter2_position, shelter2_position, agent_type=5)  # Representa o Shelter 2
+
+    # Simulação
     print("\nMapa inicial da cidade:")
     env.print_city_map()
 
     print("\nIniciando simulação de 60 segundos...")
 
-    # **Evento 1**: Aos 10 segundos, aparecem 2 `Civilian Agents`
-    #await asyncio.sleep(10)
+    # Evento 1: Abrigos esgotam seus recursos
+    await asyncio.sleep(5)
+    print("\n[Evento] Shelter 1 esgota seus recursos.")
+    shelter1.agua_comida = 0
+    shelter2.medicamentos = 0
+    print("Shelter 1 agora sem água e comida.")
 
-    '''
-    print("\n[Evento] Aos 10 segundos: Aparecem 2 novos Civilian Agents")
-    civilian1_position = [8, 7]
-    civilian2_position = [6, 3]
-    civilian1 = CivilianAgent("civilian1@localhost", "password", civilian1_position)
-    civilian2 = CivilianAgent("civilian2@localhost", "password", civilian2_position)
-    await civilian1.start()
-    await civilian2.start()
-    env.move_agent(civilian1_position, civilian1_position, 4)  # 4 representa `Civilian Agent`
-    env.move_agent(civilian2_position, civilian2_position, 4)
+    await asyncio.sleep(50)
+    print("\n[Evento] Shelter 2 esgota seus recursos.")
+    #shelter1.agua_comida = 0
+    #shelter2.medicamentos = 0
+    print("Shelter 2 agora sem água e medicamentos.")
 
-
-    # Atualizar o mapa após surgirem os civis
-    env.print_city_map()
-
-    '''
-
-    # **Evento 2**: Aos 30 segundos, o shelter esgota os recursos
-    await asyncio.sleep(5)  # Total: 10 + 20 = 30 segundos
-    print("\n[Evento] Aos 30 segundos: O Shelter esgota seus recursos")
-    shelter.agua = 0
-    shelter.comida = 0
-    print("O Shelter está agora sem recursos de água e comida.")
-
-    # Esperar até o fim da simulação (60 segundos)
-    await asyncio.sleep(20)  # Total: 30 + 30 = 60 segundos
-    print(shelter.agua)
-    print(shelter.comida)
-    print("\nvai reduzir medicamentos a seguir")
-
-    shelter.agua = 0
-
-    await asyncio.sleep(20)
-    print(shelter.agua)
-    print(shelter.comida)
-    print(shelter.medicamentos)
+    # Espera até o fim da simulação
+    await asyncio.sleep(50)
     print("\nFim da simulação de 60 segundos")
 
-    # Parar todos os agentes
-    await shelter.stop()
+    # Finalizar agentes
+    await shelter1.stop()
+    await shelter2.stop()
     for vehicle in supply_vehicles:
         await vehicle.stop()
+    await depot.stop()
 
-    # Imprimir estado final do mapa
     print("\nEstado final do mapa:")
     env.print_city_map()
 
