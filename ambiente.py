@@ -47,9 +47,22 @@ class Environment:
         pygame.display.flip()
 
     def move_agent(self, agent_pos, new_pos, agent_type):
-        self.city_map[agent_pos[0]][agent_pos[1]] = 1  # Limpar posição antiga
-        self.city_map[new_pos[0]][new_pos[1]] = agent_type  # Atualizar nova posição
-        self.draw_city()  # Atualiza o Pygame após mover o agente
+        # Verifica o que estava na posição antiga antes de colocar o agente
+        old_value = self.city_map[agent_pos[0]][agent_pos[1]]
+
+        print("OLDVALUE: ",old_value)
+
+        # Atualiza a posição antiga do agente para o valor original (shelter ou vazio)
+        if old_value == 5 or old_value == 9:
+            self.city_map[agent_pos[0]][agent_pos[1]] = old_value  # 3 por exemplo representa um shelter
+        else:
+            self.city_map[agent_pos[0]][agent_pos[1]] = 1  # Caso contrário, é vazio ou outro valor
+
+        # Atualiza a nova posição com o tipo do agente
+        self.city_map[new_pos[0]][new_pos[1]] = agent_type
+
+        # Redesenha o mapa
+        self.draw_city()
 
     def is_road_free(self, position):
         return self.city_map[position[0]][position[1]] == 1

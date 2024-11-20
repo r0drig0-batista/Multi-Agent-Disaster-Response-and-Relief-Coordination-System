@@ -21,49 +21,78 @@ class ResponderAgent(Agent):
             2: []
         }
 
+        self.message_buffer = {  # Buffer compartilhado para mensagens
+            "request": [],
+            "inform": [],
+            "confirm": []
+        }
+
+    class MessageRouterBehaviour(CyclicBehaviour):
+        async def run(self):
+            msg = await self.receive(timeout=5)  # Aguarda mensagens com timeout
+            if msg:
+                print(f"Roteador recebeu: {msg}")
+
+                # Verifica o tipo de mensagem com base no performative
+                performative = msg.get_metadata("performative")
+
+                if performative == "request":
+                    # Adiciona a mensagem de pedido ao buffer
+                    self.agent.message_buffer["request"].append(msg)
+
+                elif performative == "inform":
+                    # Adiciona a mensagem de inform ao buffer
+                    self.agent.message_buffer["inform"].append(msg)
+
+                else:
+                    print(f"Mensagem desconhecida: {msg.body}")
+
     class ResponderBehaviour(CyclicBehaviour):
         async def run(self):
-            print("Aguardando solicitações de ajuda...")
+            #print("Verificando solicitações no buffer de mensagens...")
 
-            # Recebe a mensagem de pedido de ajuda
-            msg = await self.receive(timeout=10)
-            print("Mensagens de socorro: ",msg)
+            # Itera sobre as mensagens no buffer de "request"
+            for msg in self.agent.message_buffer["request"]:
+                #print("MENSAGEMMMM: ",msg)
+                #print("ID: ",str(self.agent.jid))
+                if str(self.agent.jid) == str(msg.to):  # Verifica se a mensagem é destinada ao agente atual
+                    #print ("touuuuuuuu")
+                    print(f"Mensagem destinada ao agente: {msg}")
 
-            if msg and msg.get_metadata("performative") == "request":
-                parts = msg.body.split()
-                #print("PARTS: ", parts)
+                    # Processa a mensagem
+                    parts = msg.body.split()
+                    grau = int(parts[7])  # Grau de urgência no índice 7
+                    position = eval(" ".join(parts[3:5]))  # Extrai posição dos índices 3 e 4
+                    civilian_id = str(msg.sender)
 
-                # Extrai grau de urgência e posição
-                grau = int(parts[7])  # Grau de urgência no índice 7
-                position = eval(" ".join(parts[3:5]))  # Extrai posição dos índices 3 e 4
+                    # Verifica e organiza os graus
+                    if grau >= 3:
+                        for lower_grau in range(2, grau):
+                            if lower_grau in self.agent.pedidos:
+                                for pedido in self.agent.pedidos[lower_grau]:
+                                    if pedido["position"] == position:
+                                        self.agent.pedidos[lower_grau].remove(pedido)
+                                        print(f"Pedido removido do grau {lower_grau}: {pedido}")
+                                        break
 
-                # Obtém o ID do Civilian
-                civilian_id = str(msg.sender)
+                    # Adiciona o pedido ao grau atual
+                    if grau not in self.agent.pedidos:
+                        self.agent.pedidos[grau] = []
 
-                # Verifica se o grau é >= 3
-                if grau >= 3:
-                    # Percorre os graus abaixo do atual
-                    for lower_grau in range(2, grau):
-                        if lower_grau in self.agent.pedidos:
-                            # Procura e remove a posição do grau inferior, se existir
-                            for pedido in self.agent.pedidos[lower_grau]:
-                                if pedido["position"] == position:
-                                    self.agent.pedidos[lower_grau].remove(pedido)
-                                    print(f"Pedido removido do grau {lower_grau}: {pedido}")
-                                    break
+                    self.agent.pedidos[grau].append({
+                        "position": position,
+                        "civilian_id": civilian_id
+                    })
 
-                # Adiciona o pedido ao grau atual
-                if grau not in self.agent.pedidos:
-                    self.agent.pedidos[grau] = []  # Inicializa a lista para o grau, se necessário
+                    print(f"Pedido adicionado ao grau {grau}: {self.agent.pedidos[grau]}")
 
-                self.agent.pedidos[grau].append({
-                    "position": position,
-                    "civilian_id": civilian_id,
-                    "tipo": "pendente"  # Placeholder para o tipo de pedido
-                })
+                    # Remove a mensagem do buffer após processá-la
+                    self.agent.message_buffer["request"].remove(msg)
+                    break  # Sai do loop após processar uma mensagem válida
+            else:
+                print("Nenhuma mensagem válida para este agenteeee.")
 
-                print(f"Pedido adicionado ao grau {grau}: {self.agent.pedidos[grau]}")
-                print(f"Pedidos organizados por grau: {self.agent.pedidos}")
+            await asyncio.sleep(10)  # Aguarda 10 segundos antes de verificar novamente
 
     class HandleHelpRequests(CyclicBehaviour):
         async def run(self):
@@ -72,8 +101,7 @@ class ResponderAgent(Agent):
                 print("Estou ocupado")
                 return  # Ignora se o agente está ocupado
 
-            msg = await self.receive(timeout=5)
-            print("Mensagem a sorte: ", msg)
+            #msg = await self.receive(timeout=10)
 
             # Ordena os graus de urgência em ordem decrescente (grau mais alto primeiro)
             for grau in sorted(self.agent.pedidos.keys(), reverse=True):
@@ -85,6 +113,9 @@ class ResponderAgent(Agent):
 
                     # Verifica se o Civilian já foi atendido
                     civilian_id = closest_pedido["civilian_id"]
+
+                    await asyncio.sleep(2)
+
                     if await self.is_civilian_attended(civilian_id):
                         print(f"O Civilian {civilian_id} já foi atendido. Ignorando o pedido.")
                         continue  # Passa para o próximo pedido na lista
@@ -96,6 +127,8 @@ class ResponderAgent(Agent):
                     self.agent.ocupado = False
                     return  # Sai após processar um pedido válido
 
+            await asyncio.sleep(10)
+
         async def is_civilian_attended(self, civilian_id):
             """Consulta o Civilian para verificar se ele já foi atendido."""
             msg = Message(to=civilian_id)
@@ -104,12 +137,19 @@ class ResponderAgent(Agent):
             await self.send(msg)
             print(f"Consultando o estado do Civilian {civilian_id}.")
 
-            # Aguarda a resposta do Civilian
-            reply = await self.receive(timeout=5)
-            print("Resposta do atendido: ", reply)
-            if reply and reply.body == "atendido":
-                print(f"O Civilian {civilian_id} informou que já foi atendido.")
-                return True
+            await asyncio.sleep(2)
+
+            # Itera sobre as mensagens no buffer de "inform"
+            for msg in self.agent.message_buffer["inform"]:
+                if str(self.agent.jid) == str(msg.to):
+                    if msg.body == "atendido":  # Verifica destinatário e estado
+                        print(f"O Civilian {civilian_id} informou que já foi atendido.")
+                        self.agent.message_buffer["inform"].remove(msg)  # Remove a mensagem processada
+                        return True
+                    else:
+                        print(f"O Civilian {civilian_id} não foi atendido.")
+                        self.agent.message_buffer["inform"].remove(msg)  # Remove a mensagem processada
+                        return False
 
             print(f"O Civilian {civilian_id} não foi atendido ou não respondeu.")
             return False
@@ -120,23 +160,26 @@ class ResponderAgent(Agent):
             civil_position = pedido["position"]
             civil_id = pedido["civilian_id"]
 
+
             msg = Message(to=civil_id)
             msg.body = f"Atendido {self.agent.position}"
             msg.set_metadata("performative", "inform")
             await self.send(msg)
             print(f"O {self.agent.jid} mandou mensagem de atendimento enviada ao Civilian {civil_id}.")
 
-            # Aguarda uma resposta do Civilian
-            reply = await self.receive(timeout=10)  # Espera até 10 segundos por uma resposta
-            print("REPLYffyfyfyfyf: ", reply)
-            if reply and reply.get_metadata("performative") == "confirm" and reply.body == "Confirmado":
-                print(f"Responder {self.agent.jid}: Civilian {civil_id} confirmou o atendimento. Prosseguindo.")
+            await asyncio.sleep(2)
 
-            else:
-                print(
-                    f"Responder {self.agent.jid}: Nenhuma confirmação recebida do Civilian {civil_id}. Tentando outro pedido.")
-
-                return  # Sai se não houver mais pedidos no grau
+            # Itera sobre as mensagens no buffer de "confirm"
+            for msg in self.agent.message_buffer["confirm"]:
+                if str(self.agent.jid) == str(msg.to):
+                    if msg.body == "Confirmado":  # Verifica destinatário e conteúdo
+                        print(f"Responder {self.agent.jid}: Civilian {civil_id} confirmou o atendimento. Prosseguindo.")
+                        self.agent.message_buffer["confirm"].remove(msg)  # Remove a mensagem processada
+                    else:
+                        print(
+                            f"{self.agent.jid}: Nenhuma confirmação recebida do Civilian {civil_id}. Liberando o pedido.")
+                        #pedido["estado"] = "pendente"  # Libera o pedido novamente
+                        return
 
             # Calcula o caminho até o Civilian
             path = self.agent.calculate_path(civil_position)
@@ -146,6 +189,8 @@ class ResponderAgent(Agent):
 
             # Move até o Civilian
             await self.agent.follow_path(path, tuple(civil_position))
+
+            print(f"{self.agent.jid}: Pedido do Civilian {civil_id} concluído com sucesso.")
 
             # Confirmar chegada e solicitar shelter
             await self.confirm_arrival(civil_id)
@@ -171,6 +216,7 @@ class ResponderAgent(Agent):
             closest_pedido = None
             min_distance = float("inf")
             for pedido in pedidos:
+
                 civil_position = pedido["position"]
                 distance = abs(self.agent.position[0] - civil_position[0]) + abs(
                     self.agent.position[1] - civil_position[1])
@@ -186,6 +232,7 @@ class ResponderAgent(Agent):
         print(f"Responder Agent iniciado na posição {self.position}.")
         self.add_behaviour(self.ResponderBehaviour())  # Comportamento para escutar pedidos
         self.add_behaviour(self.HandleHelpRequests())  # Comportamento para lidar com os pedidos
+        self.add_behaviour((self.MessageRouterBehaviour()))
 
 
 
@@ -463,8 +510,8 @@ class SupplyVehicleAgent(Agent):
                 entregas = [{"recurso": recurso, "quantidade": quantidade}]
                 await self.deliver_supplies(entregas, posicao_shelter, str(msg.sender))
 
-            if (self.agent.recursos["combustivel"] <= 2 or self.agent.recursos["agua_comida"] < 30 or
-                    self.agent.recursos["medicamentos"] < 10):
+            if (self.agent.recursos["combustivel"] <= 2 or self.agent.recursos["agua_comida"] < 51 or
+                    self.agent.recursos["medicamentos"] < 21):
                 print(
                     f"{self.agent.jid} tem recursos críticos. Indo reabastecer.")
                 await self.refill_at_depot()
@@ -473,17 +520,6 @@ class SupplyVehicleAgent(Agent):
                 self.agent.ocupado = False  # Libera após a entrega
 
             print(f"o agent {self.agent.jid} está agora livre porque terminou a entrega")
-
-
-        async def handle_refill(self, msg):
-            print(f"Resposta do depósito recebida: {msg.body}")
-
-            # Atualiza os recursos do veículo
-            recursos_reabastecidos = eval(msg.body.split(" ", 1)[1])  # Converte de string para dicionário
-            for recurso, quantidade in recursos_reabastecidos.items():
-                self.agent.recursos[recurso] += quantidade
-
-            print(f"{self.agent.jid} reabastecido: {self.agent.recursos}")
 
         async def handle_disponibility(self, msg):
             # Extrai a posição do Shelter da mensagem
@@ -522,19 +558,13 @@ class SupplyVehicleAgent(Agent):
             """
             print(f"{self.agent.jid} iniciando entrega para o Shelter em {posicao_shelter}. Recursos: {entregas}")
 
-            # Calcula o caminho até o Shelter
-            path = a_star(self.agent.environment, tuple(self.agent.position), tuple(posicao_shelter))
+            path = self.agent.calculate_path(posicao_shelter)
             if not path:
-                print(f"{self.agent.jid}: Nenhum caminho encontrado para o Shelter em {posicao_shelter}!")
+                print(f"Não foi possível encontrar caminho para o Depot.")
                 return
 
-            # Move o veículo até o Shelter
-            for next_position in path[1:]:
-                self.agent.environment.move_agent(tuple(self.agent.position), next_position, agent_type=8)
-                self.agent.update_position(next_position)
-                self.agent.recursos["combustivel"] -= 1
-
-                await asyncio.sleep(1)  # Simula o movimento
+            # Move até o Civilian
+            await self.agent.follow_path(path, tuple(posicao_shelter))
 
             print(f"{self.agent.jid} chegou ao Shelter em {posicao_shelter}. Iniciando entregas.")
 
@@ -564,19 +594,14 @@ class SupplyVehicleAgent(Agent):
         async def refill_at_depot(self):
             """Move o veículo até o depósito para reabastecimento."""
             depot_position = [0, 0]  # Substitua pela posição real do depósito
-            path = a_star(self.agent.environment, tuple(self.agent.position), tuple(depot_position))
+
+            path = self.agent.calculate_path(depot_position)
             if not path:
-                print("Nenhum caminho encontrado para o depósito!")
+                print(f"Não foi possível encontrar caminho para o Depot.")
                 return
 
-            # Move o veículo até o depósito
-            for next_position in path[1:]:
-                if self.agent.environment.is_road_free(next_position):
-                    self.agent.environment.move_agent(tuple(self.agent.position), next_position, agent_type=8)
-                    self.agent.update_position(next_position)
-                    if not self.agent.recursos["combustivel"] <= 0:
-                        self.agent.recursos["combustivel"] -= 1
-                await asyncio.sleep(1)
+            # Move até o Civilian
+            await self.agent.follow_path(path, tuple(depot_position))
 
             print(f"{self.agent.jid} chegou ao depósito. Solicitando reabastecimento.")
 
@@ -602,6 +627,37 @@ class SupplyVehicleAgent(Agent):
             else:
                 print(f"{self.agent.jid} não conseguiu reabastecer no depósito.")
 
+    async def follow_path(self, path, target_position):
+        """Segue o caminho calculado até a posição alvo."""
+        for next_position in path[1:]:
+            if next_position == target_position:
+                self.environment.move_agent(tuple(self.position), next_position, self.environment.city_map[target_position[0]][target_position[1]])
+                self.update_position(next_position)
+                print(f"{self.jid} chegou ao civilian.")
+                if self.recursos["combustivel"] > 0:
+                    self.recursos["combustivel"]-=1
+
+            elif self.environment.is_road_free(next_position):
+                self.environment.move_agent(tuple(self.position), next_position, agent_type=7)
+                self.update_position(next_position)
+                print(f"{self.jid} movido para {next_position}.")
+                if self.recursos["combustivel"] > 0:
+                    self.recursos["combustivel"]-=1
+
+            else:
+                print(f"Caminho bloqueado em {next_position}. Recalculando...")
+                path = self.calculate_path(target_position)
+                if not path:
+                    print(f"{self.jid} não conseguiu recalcular o caminho!")
+                    return
+                await self.follow_path(path, target_position)
+                return
+            await asyncio.sleep(1)
+
+    def calculate_path(self, target_position):
+        """Calcula o caminho até a posição alvo usando A*."""
+        path = a_star(self.environment, tuple(self.position), tuple(target_position))
+        return path
 
     async def setup(self):
         print("Supply Vehicle Agent iniciado")
@@ -620,13 +676,13 @@ class ShelterAgent(Agent):
         self.max_vehicles = max_vehicles
 
         # Atributos de recursos
-        self.agua_comida = 100
+        self.agua_comida = 200
         self.medicamentos = 50
-        self.pessoas = 40
+        self.pessoas = 0
 
         # Limites mínimos para chamar o Vehicle
-        self.limite_agua_comida = 30
-        self.limite_medicamentos = 10
+        self.limite_agua_comida = 150
+        self.limite_medicamentos = 30
         self.limite_pessoas = 50
 
         # Dicionário para rastrear quais recursos já foram solicitados
@@ -653,13 +709,13 @@ class ShelterAgent(Agent):
         async def run(self):
             """Simula o consumo periódico de recursos com base no número de pessoas."""
             taxa_consumo = {
-                "agua_comida": 1,  # 1 unidade por pessoa
+                "agua_comida": 0.7,  # 1 unidade por pessoa
                 "medicamentos": 0.2  # 0.2 unidade por pessoa
             }
 
             print(f"{self.agent.jid}: Consumo de recursos:")
             for recurso, taxa in taxa_consumo.items():
-                consumo_total = taxa * self.agent.pessoas
+                consumo_total = int(taxa * self.agent.pessoas)
                 setattr(self.agent, recurso, max(0, getattr(self.agent, recurso) - consumo_total))
                 print(f"  {recurso}: {getattr(self.agent, recurso)} unidades restantes após consumo.")
 
@@ -959,8 +1015,8 @@ class ShelterAgent(Agent):
         self.response_collector = self.CentralizedResponseCollector()
         self.add_behaviour(self.response_collector)
 
-        #self.response_consumption_behavior = self.ResourceConsumptionBehaviour()
-        #self.add_behaviour(self.response_consumption_behavior)
+        self.response_consumption_behavior = self.ResourceConsumptionBehaviour()
+        self.add_behaviour(self.response_consumption_behavior)
 
 class DepotAgent(Agent):
     def __init__(self, jid, password, position, vehicle_max_resources):
