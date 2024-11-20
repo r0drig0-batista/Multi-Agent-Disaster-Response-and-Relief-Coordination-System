@@ -6,6 +6,25 @@ async def main():
     # Inicializar o ambiente
     env = Environment(size=10)
 
+    civilian_position1 = [0, 0]  # Posição inicial do depósito
+    civilian1 = CivilianAgent("civilian1@localhost", "password", civilian_position1)
+    civilian1.grau_urgencia = 4
+    await civilian1.start()
+
+    civilian_position2 = [4, 4]  # Posição inicial do depósito
+    civilian2 = CivilianAgent("civilian2@localhost", "password", civilian_position2)
+    civilian2.grau_urgencia = 4
+    await civilian2.start()
+
+    responder_position = [8, 8]  # Posição inicial do depósito
+    responder = ResponderAgent("responder1@localhost", "password", responder_position, env)
+    await responder.start()
+
+    responder_position2 = [7, 7]  # Posição inicial do depósito
+    responder2 = ResponderAgent("responder2@localhost", "password", responder_position2, env)
+    await responder2.start()
+
+    '''
     # Criar veículos de suprimento
     supply_vehicle_positions = [[1, 1], [8, 9], [8, 8], [4, 0]]
     supply_vehicles = []
@@ -79,6 +98,16 @@ async def main():
 
     print("\nEstado final do mapa:")
     env.print_city_map()
+    '''
+
+    await asyncio.sleep(10)
+    #await civilian1.stop()
+
+
+    await asyncio.sleep(50)
+    await responder.stop()
+    await civilian1.stop()
+    await civilian2.stop()
 
 if __name__ == "__main__":
     asyncio.run(main())

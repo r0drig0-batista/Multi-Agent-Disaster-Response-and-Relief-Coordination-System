@@ -10,10 +10,17 @@ import asyncio
 from pathfinding import a_star
 
 class ResponderAgent(Agent):
-    def __init__(self, jid, password, position, environment):
+    def __init__(self, jid, password, position,environment):
         super().__init__(jid, password)
         self.position = position
         self.environment = environment
+        self.ocupado = False  # Estado do agente
+        self.pedidos = {
+            5: [],
+            4: [],
+            3: [],
+            2: []
+        }
 
     class ResponderBehaviour(CyclicBehaviour):
         async def run(self):
@@ -22,135 +29,305 @@ class ResponderAgent(Agent):
             # Recebe a mensagem de pedido de ajuda
             msg = await self.receive(timeout=10)
             if msg and msg.get_metadata("performative") == "request":
-                print(f"Recebida solicitação de {msg.sender}: {msg.body}")
+                parts = msg.body.split()
+                #print("PARTS: ", parts)
 
-                # Extrai a posição do Civilian Agent
-                civil_position = self.extract_coordinates(msg)
-                if not civil_position:
-                    return
+                # Extrai grau de urgência e posição
+                grau = int(parts[7])  # Grau de urgência no índice 7
+                position = eval(" ".join(parts[3:5]))  # Extrai posição dos índices 3 e 4
 
-                # Calcula o caminho até o Civilian
-                path = self.calculate_path(civil_position)
-                if not path:
-                    print("Nenhum caminho encontrado para o Civilian!")
-                    return
+                # Obtém o ID do Civilian
+                civilian_id = str(msg.sender)
 
-                # Segue o caminho até o Civilian
-                await self.follow_path(path, msg)
+                # Verifica se o grau é >= 3
+                if grau >= 3:
+                    # Percorre os graus abaixo do atual
+                    for lower_grau in range(2, grau):
+                        if lower_grau in self.agent.pedidos:
+                            # Procura e remove a posição do grau inferior, se existir
+                            for pedido in self.agent.pedidos[lower_grau]:
+                                if pedido["position"] == position:
+                                    self.agent.pedidos[lower_grau].remove(pedido)
+                                    print(f"Pedido removido do grau {lower_grau}: {pedido}")
+                                    break
 
-                # Ao chegar, procura um shelter disponível
-                await self.find_shelter()
+                # Adiciona o pedido ao grau atual
+                if grau not in self.agent.pedidos:
+                    self.agent.pedidos[grau] = []  # Inicializa a lista para o grau, se necessário
 
-        def extract_coordinates(self, msg):
-            """Extrai as coordenadas do Civilian a partir da mensagem."""
-            try:
-                _, position_info = msg.body.split("em")
-                civil_position = eval(position_info.strip())  # Converte para tupla (x, y)
-                print(f"Posição do Civilian: {civil_position}")
-                return civil_position
-            except Exception as e:
-                print(f"Erro ao interpretar a posição: {e}")
+                self.agent.pedidos[grau].append({
+                    "position": position,
+                    "civilian_id": civilian_id,
+                    "tipo": "pendente"  # Placeholder para o tipo de pedido
+                })
+
+                print(f"Pedido adicionado ao grau {grau}: {self.agent.pedidos[grau]}")
+                print(f"Pedidos organizados por grau: {self.agent.pedidos}")
+
+    class HandleHelpRequests(CyclicBehaviour):
+        async def run(self):
+            """Lida com os pedidos de ajuda, priorizando graus mais altos."""
+            if self.agent.ocupado:
+                return  # Ignora se o agente está ocupado
+
+            msg = await self.receive(timeout=5)
+
+            # Ordena os graus de urgência em ordem decrescente (grau mais alto primeiro)
+            for grau in sorted(self.agent.pedidos.keys(), reverse=True):
+                closest_pedido = self.find_closest_pedido(grau)
+
+                print("O pedido mais proximo é este: ",closest_pedido)
+
+                if closest_pedido:
+
+                    # Verifica se o Civilian já foi atendido
+                    civilian_id = closest_pedido["civilian_id"]
+                    if await self.is_civilian_attended(civilian_id):
+                        print(f"O Civilian {civilian_id} já foi atendido. Ignorando o pedido.")
+                        continue  # Passa para o próximo pedido na lista
+
+                    # Se o pedido for válido, processa-o
+                    self.agent.ocupado = True
+                    await self.handle_request(closest_pedido, grau)
+
+                    self.agent.ocupado = False
+                    return  # Sai após processar um pedido válido
+
+        async def is_civilian_attended(self, civilian_id):
+            """Consulta o Civilian para verificar se ele já foi atendido."""
+            msg = Message(to=civilian_id)
+            msg.body = "status"
+            msg.set_metadata("performative", "query")
+            await self.send(msg)
+            print(f"Consultando o estado do Civilian {civilian_id}.")
+
+            # Aguarda a resposta do Civilian
+            reply = await self.receive(timeout=5)
+            #print("REPLY de atendido: ", reply)
+            if reply and reply.body == "atendido":
+                print(f"O Civilian {civilian_id} informou que já foi atendido.")
+                return True
+
+            print(f"O Civilian {civilian_id} não foi atendido ou não respondeu.")
+            return False
+
+
+        async def handle_request(self, pedido, grau):
+            print(f"Lidando com pedido de grau {grau}: {pedido}")
+            civil_position = pedido["position"]
+            civil_id = pedido["civilian_id"]
+
+            msg = Message(to=civil_id)
+            msg.body = f"Atendido {self.agent.position}"
+            msg.set_metadata("performative", "inform")
+            await self.send(msg)
+            print(f"Mensagem de atendimento enviada ao Civilian {civil_id}.")
+
+            # Aguarda uma resposta do Civilian
+            reply = await self.receive(timeout=10)  # Espera até 10 segundos por uma resposta
+            #print("REPLY: ",reply)
+            if reply and reply.get_metadata("performative") == "confirm" and reply.body == "Confirmado":
+                print(f"Responder {self.agent.jid}: Civilian {civil_id} confirmou o atendimento. Prosseguindo.")
+            else:
+                print(
+                    f"Responder {self.agent.jid}: Nenhuma confirmação recebida do Civilian {civil_id}. Tentando outro pedido.")
+                # Se nenhuma resposta foi recebida, escolhe outro pedido
+                closest_pedido = self.find_closest_pedido(grau)
+                if not closest_pedido:
+                    print(f"Responder {self.agent.jid}: Nenhum outro pedido disponível no grau {grau}.")
+                    return  # Sai se não houver mais pedidos no grau
+                pedido = closest_pedido
+                print("CLOSEST PEDIDO: ", pedido)
+                return
+
+            # Calcula o caminho até o Civilian
+            path = self.agent.calculate_path(civil_position)
+            if not path:
+                print(f"Não foi possível encontrar caminho para o Civilian {civil_id}.")
+                return
+
+            # Move até o Civilian
+            await self.agent.follow_path(path, civil_position)
+
+            # Confirmar chegada e solicitar shelter
+            await self.confirm_arrival(civil_id)
+            #await self.agent.request_shelter(civil_position)
+
+        async def confirm_arrival(self, civil_id):
+            """Envia uma mensagem de confirmação ao Civilian ao chegar na posição."""
+            print(f"{self.agent.jid} confirmando chegada ao {civil_id}.")
+
+            # Envia a mensagem de confirmação para o Civilian
+            msg = Message(to=civil_id)
+            msg.body = f"Responder chegou para ajudar você!"
+            msg.set_metadata("performative", "inform")
+            await self.send(msg)
+            print(f"Confirmação de chegada enviada para {civil_id}.")
+
+        def find_closest_pedido(self, grau):
+            """Encontra o próximo pedido mais próximo dentro do mesmo grau."""
+            pedidos = self.agent.pedidos[grau]
+            if not pedidos:
                 return None
 
-        def calculate_path(self, target_position):
-            """Calcula o caminho até a posição do Civilian usando A*."""
-            path = a_star(self.agent.environment, tuple(self.agent.position), tuple(target_position))
-            if path:
-                print(f"Caminho calculado para o Civilian: {path}")
-            else:
-                print("Falha ao calcular o caminho.")
-            return path
+            closest_pedido = None
+            min_distance = float("inf")
+            for pedido in pedidos:
+                civil_position = pedido["position"]
+                distance = abs(self.agent.position[0] - civil_position[0]) + abs(
+                    self.agent.position[1] - civil_position[1])
+                if distance < min_distance:
+                    min_distance = distance
+                    closest_pedido = pedido
 
-        async def follow_path(self, path, msg):
-            """Segue o caminho calculado até o Civilian, recalculando se encontrar bloqueios."""
-            for next_position in path[1:]:  # Ignora a posição inicial
-                if self.agent.environment.is_road_free(next_position):
-                    self.agent.environment.move_agent(tuple(self.agent.position), next_position,
-                                                      agent_type=7)  # Representando o Responder
-                    self.agent.update_position(next_position)
-                    print(f"Responder movido para {next_position}")
-                else:
-                    print(f"Caminho bloqueado em {next_position}. Recalculando caminho...")
-                    path = self.calculate_path(eval(msg.body.split("em")[1].strip()))
-                    if not path:
-                        print("Nenhum caminho alternativo encontrado!")
-                        return
-                    await self.follow_path(path, msg)
-                    return
-
-                await asyncio.sleep(1)  # Pequeno atraso para simular movimento
-
-            print("Responder chegou ao Civilian.")
-            await self.confirm_arrival(msg)
-
-        async def confirm_arrival(self, msg):
-            """Envia uma mensagem de confirmação ao Civilian ao chegar na posição."""
-            reply = Message(to=str(msg.sender))
-            reply.body = "Cheguei ao local e estou pronto para ajudar!"
-            await self.send(reply)
-            print("Mensagem de chegada enviada ao Civilian.")
-
-        async def find_shelter(self):
-            """Procura um shelter disponível e envia uma mensagem de consulta."""
-            print("Procurando um Shelter disponível...")
-
-            # Aqui vamos simular o envio de uma mensagem para um Shelter Agent
-            # Em um cenário real, você teria uma lista de abrigos ou uma função para encontrá-los
-            shelter_jid = "shelter@localhost"  # Substitua pelo JID real do shelter
-            msg = Message(to=shelter_jid)
-            msg.body = f"Verificação de capacidade de shelter perto de {self.agent.position}"
-            msg.set_metadata("performative", "query")  # Indicando que é uma consulta
-            await self.send(msg)
-            print(f"Consulta enviada para o Shelter em {shelter_jid}.")
-
-            # Espera uma resposta do shelter sobre a capacidade
-            reply = await self.receive(timeout=10)
-            if reply:
-                print(f"Resposta recebida do Shelter: {reply.body}")
-            else:
-                print("Nenhuma resposta recebida do Shelter.")
+            if closest_pedido:
+                pedidos.remove(closest_pedido)  # Remove o pedido do dicionário após selecioná-lo
+            return closest_pedido
 
     async def setup(self):
-        print("Responder Agent iniciado")
-        self.responder_behaviour = self.ResponderBehaviour()
-        self.add_behaviour(self.responder_behaviour)
+        print(f"Responder Agent iniciado na posição {self.position}.")
+        self.add_behaviour(self.ResponderBehaviour())  # Comportamento para escutar pedidos
+        self.add_behaviour(self.HandleHelpRequests())  # Comportamento para lidar com os pedidos
+
+
+
+    def calculate_path(self, target_position):
+        """Calcula o caminho até a posição alvo usando A*."""
+        path = a_star(self.environment, tuple(self.position), tuple(target_position))
+        return path
+
+    async def follow_path(self, path, target_position):
+        """Segue o caminho calculado até a posição alvo."""
+        for next_position in path[1:]:
+            if next_position == target_position:
+                self.environment.move_agent(tuple(self.position), next_position, agent_type=7)
+                self.update_position(next_position)
+                print(f"{self.jid} chegou ao civilian.")
+
+            if self.environment.is_road_free(next_position):
+                self.environment.move_agent(tuple(self.position), next_position, agent_type=7)
+                self.update_position(next_position)
+                print(f"{self.jid} movido para {next_position}.")
+
+            else:
+                print(f"Caminho bloqueado em {next_position}. Recalculando...")
+                path = self.calculate_path(target_position)
+                if not path:
+                    print(f"{self.jid} não conseguiu recalcular o caminho!")
+                    return
+                await self.follow_path(path, target_position)
+                return
+            await asyncio.sleep(1)
 
     def update_position(self, new_position):
         self.position = new_position
-        print(f"Responder movido para {self.position}")
 
 
 class CivilianAgent(Agent):
     def __init__(self, jid, password, position):
         super().__init__(jid, password)
         self.position = position
+        self.grau_urgencia = 1  # Grau inicial de urgência
+        self.atendido = False  # Indica se o pedido foi atendido
+        self.pedido_id = None
+
+    class EscalateUrgencyBehaviour(CyclicBehaviour):
+        async def run(self):
+            if self.agent.atendido:
+                return  # Não escala urgência se já foi atendido
+
+            # Recebe mensagens por um curto período para esperar múltiplas respostas
+            respostas = []
+            start_time = time.time()
+            while time.time() - start_time < 5:  # Aguarda até 5 segundos por múltiplas respostas
+                msg = await self.receive(timeout=1)
+                if msg:
+                    if msg.get_metadata("performative") == "query" and msg.body == "status":
+                        # Responde à consulta de estado
+                        reply = Message(to=str(msg.sender))
+                        reply.body = "atendido" if self.agent.atendido else "nao_atendido"
+                        reply.set_metadata("performative", "inform")
+                        await self.send(reply)
+                        print(f"{self.agent.jid}: Respondeu ao estado para {msg.sender}: {reply.body}")
+
+                    parts = msg.body.split()
+                    #print("PARTS: ",parts)
+                    if parts[0] == "Atendido":
+                        # Armazena a posição do responder e seu ID
+                        responder_id = str(msg.sender)
+                        responder_position = eval(" ".join(parts[1:]))  # Exemplo: posição no metadado
+                        respostas.append({"id": responder_id, "position": responder_position})
+                        print(respostas)
+
+            if respostas:
+                # Avalia qual responder está mais próximo
+                def calcular_distancia(pos1, pos2):
+                    return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
+
+                # Calcula as distâncias dos responders e escolhe o mais próximo
+                distancias = [
+                    {"id": r["id"], "position": r["position"],
+                     "distance": calcular_distancia(self.agent.position, r["position"])}
+                    for r in respostas
+                ]
+                escolhido = min(distancias, key=lambda x: x["distance"])
+                print(
+                    f"{self.agent.jid}: Escolheu o responder mais próximo: {escolhido['id']} na posição {escolhido['position']}.")
+
+                # Define como atendido e notifica o responder escolhido
+                self.agent.atendido = True
+                confirm_msg = Message(to=escolhido["id"])
+                confirm_msg.body = "Confirmado"
+                confirm_msg.set_metadata("performative", "confirm")
+                #print("MENSAGEM CONFIRMADA: ",confirm_msg)
+                await self.send(confirm_msg)
+            else:
+                # Caso nenhuma resposta seja recebida, escala a urgência
+                if self.agent.grau_urgencia < 5:  # Limite máximo de urgência
+                    self.agent.grau_urgencia += 1
+                    print(f"{self.agent.jid}: Grau de urgência escalado para {self.agent.grau_urgencia}.")
+
+                if self.agent.grau_urgencia >= 2:
+                    self.agent.add_behaviour(self.agent.RequestHelpBehaviour())
 
     class RequestHelpBehaviour(OneShotBehaviour):
         async def run(self):
-            print("Enviando solicitação de ajuda...")
+            #print(f"{self.agent.jid}: Enviando solicitação de ajuda no grau {self.agent.grau_urgencia}.")
 
-            # Define a mensagem de pedido de ajuda com posição
-            msg = Message(to="responder@localhost")  # Coloque aqui o JID correto do Responder
-            msg.body = f"Ajuda necessária em {self.agent.position}"
-            msg.set_metadata("performative", "request")  # Metadado para identificar a natureza da mensagem
+            self.agent.pedido_id = str(uuid.uuid4())
+
+            # Define a mensagem de pedido de ajuda
+            msg = Message(to="responder1@localhost")  # Coloque aqui o JID correto do Responder
+            msg.body = (f"Ajuda necessária em {self.agent.position} com grau {self.agent.grau_urgencia} "
+                        f"id {self.agent.pedido_id}")
+            msg.set_metadata("performative", "request")
             await self.send(msg)
-            print(f"Solicitação de ajuda enviada! Posição: {self.agent.position}")
+            print(
+                f"{self.agent.jid}: Solicitação de ajuda enviada! "
+                f"Posição: {self.agent.position}, Grau: {self.agent.grau_urgencia}, ID: {self.agent.pedido_id}"
+            )
 
-            # Aguardar resposta do Responder Agent
-            reply = await self.receive(timeout=10)
-            if reply:
-                print(f"Recebida resposta de ResponderAgent: {reply.body}")
-            else:
-                print("Nenhuma resposta recebida.")
+            self.agent.pedido_id = str(uuid.uuid4())
+
+            # Define a mensagem de pedido de ajuda
+            msg = Message(to="responder2@localhost")  # Coloque aqui o JID correto do Responder
+            msg.body = (f"Ajuda necessária em {self.agent.position} com grau {self.agent.grau_urgencia} "
+                        f"id {self.agent.pedido_id}")
+            msg.set_metadata("performative", "request")
+            await self.send(msg)
+            print(
+                f"{self.agent.jid}: Solicitação de ajuda enviada! "
+                f"Posição: {self.agent.position}, Grau: {self.agent.grau_urgencia}, ID: {self.agent.pedido_id}"
+            )
 
     async def setup(self):
-        print("Civilian Agent iniciado")
-        self.request_help_behaviour = self.RequestHelpBehaviour()
-        self.add_behaviour(self.request_help_behaviour)
+        print(f"{self.jid} iniciado na posição {self.position}")
+        self.add_behaviour(self.EscalateUrgencyBehaviour())
 
     def update_position(self, new_position):
         self.position = new_position
-        print(f"Civilian movido para {self.position}")
+        print(f"{self.jid} movido para {self.position}")
+
 
 class SupplyVehicleAgent(Agent):
     def __init__(self, jid, password, position, environment):
