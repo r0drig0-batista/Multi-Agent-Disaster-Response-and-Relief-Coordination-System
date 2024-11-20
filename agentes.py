@@ -165,8 +165,15 @@ class SupplyVehicleAgent(Agent):
             "combustivel": 30
         }
 
+        self.recursos_maximos = {
+            "agua_comida": 200,
+            "medicamentos": 100,
+            "combustivel": 100
+        }
+
         self.entregas_pendentes = {}
         self.ocupado= False
+
 
     class SupplyBehaviour(CyclicBehaviour):
         def __init__(self):
@@ -174,7 +181,7 @@ class SupplyVehicleAgent(Agent):
             self.processed_requests = set()  # Rastreia os IDs dos pedidos já processados
 
         async def run(self):
-            #print(f"{self.agent.jid} aguardando pedidos de recursos. Ocupado: {self.agent.ocupado}")
+            print(f"{self.agent.jid} aguardando pedidos de recursos. Ocupado: {self.agent.ocupado}")
 
             # O veículo só processa novos pedidos se não estiver ocupado
             if self.agent.ocupado:
@@ -184,124 +191,154 @@ class SupplyVehicleAgent(Agent):
             # Recebe a mensagem de solicitação de recursos via broadcast
             msg = await self.receive(timeout=10)
             if msg:
-
                 origin = msg.get_metadata("origin")
 
-                if msg.get_metadata("performative") == "request":
-                    if origin == "shelter":
-                        parts = msg.body.split()
-                        unique_id = parts[-1]  # O último elemento é o ID
-                        tipo = parts[0]
-
-                        if unique_id in self.processed_requests:
-                            print(f"Pedido já processado com ID {unique_id}: {msg.body}")
-                            return  # Ignora pedidos duplicados
-
-                        self.processed_requests.add(unique_id)  # Marca o pedido como processado
-                        print(f"Pedido de {origin} recebido: {msg.body}")
-
-                        if tipo == "duplo":
-
-                            recurso1 = parts[1]
-                            quantidade1 = int(parts[2])
-                            recurso2 = parts[3]
-                            quantidade2 = int(parts[4])
-
-                            if self.agent.recursos[recurso1] >= quantidade1 and self.agent.recursos[recurso2] >= quantidade2:
-
-                                response = Message(to=str(msg.sender))
-                                # print("RESPONSE: ", response)
-                                response.body = f"duplo {self.agent.position} {recurso1} {quantidade1} {recurso2} {quantidade2}"
-                                #print("MSGGGBODYYY DUPLO: ", response.body)
-                                response.set_metadata("performative", "response")
-                                await self.send(response)
-                                print(f"{self.agent.jid} respondeu ao abrigo com sua posição.")
-
-                            if self.agent.recursos[recurso1] >= quantidade1 and self.agent.recursos[recurso2] < quantidade2:
-
-                                response = Message(to=str(msg.sender))
-                                # print("RESPONSE: ", response)
-                                response.body = f"simples {self.agent.position} {recurso1} {quantidade1}"
-                                #print("MSGGGBODYYY SIMPLES: ", response.body)
-                                response.set_metadata("performative", "response")
-                                await self.send(response)
-                                print(f"{self.agent.jid} respondeu ao abrigo com sua posição.")
-
-                            if self.agent.recursos[recurso1] < quantidade1 and self.agent.recursos[recurso2] >= quantidade2:
-
-                                response = Message(to=str(msg.sender))
-                                # print("RESPONSE: ", response)
-                                response.body = f"simples {self.agent.position} {recurso2} {quantidade2}"
-                                #print("MSGGGBODYYY SIMPLES: ", response.body)
-                                response.set_metadata("performative", "response")
-                                await self.send(response)
-                                print(f"{self.agent.jid} respondeu ao abrigo com sua posição.")
-
-                        elif tipo == "simples":
-
-                            recurso = parts[1]
-                            quantidade = int(parts[2])
-
-                            #print("RECURSO: ", recurso)
-
-                            #print("Dicionario: ", self.agent.recursos)
-
-                            if self.agent.recursos[recurso] >= quantidade:
-                                response = Message(to=str(msg.sender))
-                                # print("RESPONSE: ", response)
-                                response.body = f"simples {self.agent.position} {recurso} {quantidade}"
-                                #print("MSGGGBODYYY: ",response.body)
-                                response.set_metadata("performative", "response")
-                                await self.send(response)
-                                print(f"{self.agent.jid} respondeu ao abrigo com sua posição.")
-
+                if msg.get_metadata("performative") == "request" and origin == "shelter":
+                    await self.handle_request(msg)
 
                 # Recebe o pedido de confirmação direto do shelter para a entrega
-                if msg.get_metadata("performative") == "confirm":
+                elif msg.get_metadata("performative") == "confirm" and origin == "shelter":
+                    await self.handle_confirmation(msg)
 
-                    if origin == "depot":
-                        parts = msg.body.split()
-                        #print("Parts: ", parts)
-                        recurso = parts[1]  # O último elemento é o ID
-                        quantidade = int(parts[2])
-                        self.agent.recursos[recurso] += quantidade
-                        print("Recurso de combustivel: ", self.agent.recursos["combustivel"])
+                # Verifica reabastecimento no depósito
+                #elif msg.get_metadata("performative") == "confirm" and origin == "depot":
+                #    await self.handle_refill(msg)
 
-                    if origin == "shelter":
-                        print(f"Mensagem de confirmação recebida: {msg.body}")
-                        parts = msg.body.split()
-                        tipo = parts[0]
+                elif msg.get_metadata("performative") == "query" and origin == "shelter" and "disponibilidade" in msg.body:
+                    await self.handle_disponibility(msg)
 
-                        if tipo == "confirmar_duplo":
-                            # Exemplo de mensagem: confirmar_duplo (2, 2) agua_comida 40 medicamentos 20
-                            posicao_shelter = eval(" ".join(parts[1:3]))
-                            recurso1 = parts[3]
-                            quantidade1 = int(parts[4])
-                            recurso2 = parts[5]
-                            quantidade2 = int(parts[6])
+        async def handle_request(self, msg):
+            """Processa pedidos recebidos do Shelter."""
+            parts = msg.body.split()
+            unique_id = parts[-1]
+            tipo = parts[0]
 
-                            print(
-                                f"{self.agent.jid} recebeu confirmação para entregar {quantidade1} de {recurso1} e {quantidade2} de {recurso2} para o Shelter em {posicao_shelter}.")
+            if unique_id in self.processed_requests:
+                print(f"Pedido já processado com ID {unique_id}: {msg.body}")
+                return
 
-                            # Cria lista de entregas para processar em conjunto
-                            entregas = [
-                                {"recurso": recurso1, "quantidade": quantidade1},
-                                {"recurso": recurso2, "quantidade": quantidade2}
-                            ]
-                            await self.deliver_supplies(entregas, posicao_shelter, str(msg.sender))
+            self.processed_requests.add(unique_id)  # Marca o pedido como processado
 
-                        elif tipo == "confirmar_simples":
-                            # Exemplo de mensagem: confirmar_simples (2, 2) agua_comida 30
-                            posicao_shelter = eval(" ".join(parts[1:3]))
-                            recurso = parts[3]
-                            quantidade = int(parts[4])
+            if self.agent.ocupado:
+                print(f"{self.agent.jid} está ocupado. Ignorando pedido: {msg.body}")
+                return
 
-                            print(
-                                f"{self.agent.jid} recebeu confirmação para entregar {quantidade} de {recurso} para o Shelter em {posicao_shelter}.")
+            print(f"Pedido recebido: {msg.body}")
 
-                            # Cria lista com um único item e processa
-                            entregas = [{"recurso": recurso, "quantidade": quantidade}]
-                            await self.deliver_supplies(entregas, posicao_shelter, str(msg.sender))
+            # Processa pedidos do tipo "duplo" e "simples"
+            if tipo == "duplo":
+                recurso1, quantidade1 = parts[1], int(parts[2])
+                recurso2, quantidade2 = parts[3], int(parts[4])
+
+                # Verifica disponibilidade
+                if self.agent.recursos[recurso1] >= quantidade1 and self.agent.recursos[recurso2] >= quantidade2:
+                    response = Message(to=str(msg.sender))
+                    response.body = f"duplo {self.agent.position} {recurso1} {quantidade1} {recurso2} {quantidade2}"
+                    response.set_metadata("performative", "response")
+                    await self.send(response)
+                    print(f"Resposta enviada: {response.body}")
+
+                if self.agent.recursos[recurso1] >= quantidade1 and self.agent.recursos[recurso2] < quantidade2:
+                    response = Message(to=str(msg.sender))
+                    # print("RESPONSE: ", response)
+                    response.body = f"simples {self.agent.position} {recurso1} {quantidade1}"
+                    # print("MSGGGBODYYY SIMPLES: ", response.body)
+                    response.set_metadata("performative", "response")
+                    await self.send(response)
+                    print(f"{self.agent.jid} respondeu ao abrigo com sua posição.")
+
+                if self.agent.recursos[recurso1] < quantidade1 and self.agent.recursos[recurso2] >= quantidade2:
+                    response = Message(to=str(msg.sender))
+                    # print("RESPONSE: ", response)
+                    response.body = f"simples {self.agent.position} {recurso2} {quantidade2}"
+                    # print("MSGGGBODYYY SIMPLES: ", response.body)
+                    response.set_metadata("performative", "response")
+                    await self.send(response)
+                    print(f"{self.agent.jid} respondeu ao abrigo com sua posição.")
+
+            elif tipo == "simples":
+                recurso, quantidade = parts[1], int(parts[2])
+                if self.agent.recursos[recurso] >= quantidade:
+                    response = Message(to=str(msg.sender))
+                    response.body = f"simples {self.agent.position} {recurso} {quantidade}"
+                    response.set_metadata("performative", "response")
+                    await self.send(response)
+                    print(f"Resposta enviada: {response.body}")
+
+        async def handle_confirmation(self, msg):
+            """Processa confirmações de entrega."""
+            self.agent.ocupado = True  # Marca como ocupado
+            print(f"O agente {self.agent.jid} está ocupado")
+            parts = msg.body.split()
+            tipo = parts[0]
+
+            if tipo == "confirmar_duplo":
+                posicao_shelter = eval(" ".join(parts[1:3]))
+                recurso1, quantidade1 = parts[3], int(parts[4])
+                recurso2, quantidade2 = parts[5], int(parts[6])
+                entregas = [
+                    {"recurso": recurso1, "quantidade": quantidade1},
+                    {"recurso": recurso2, "quantidade": quantidade2},
+                ]
+                await self.deliver_supplies(entregas, posicao_shelter, str(msg.sender))
+
+            elif tipo == "confirmar_simples":
+                posicao_shelter = eval(" ".join(parts[1:3]))
+                recurso, quantidade = parts[3], int(parts[4])
+                entregas = [{"recurso": recurso, "quantidade": quantidade}]
+                await self.deliver_supplies(entregas, posicao_shelter, str(msg.sender))
+
+            if (self.agent.recursos["combustivel"] <= 2 or self.agent.recursos["agua_comida"] < 30 or
+                    self.agent.recursos["medicamentos"] < 10):
+                print(
+                    f"{self.agent.jid} tem recursos críticos. Indo reabastecer.")
+                await self.refill_at_depot()
+                self.agent.ocupado = False  # Libera após a entrega
+            else:
+                self.agent.ocupado = False  # Libera após a entrega
+
+            print(f"o agent {self.agent.jid} está agora livre porque terminou a entrega")
+
+
+        async def handle_refill(self, msg):
+            print(f"Resposta do depósito recebida: {msg.body}")
+
+            # Atualiza os recursos do veículo
+            recursos_reabastecidos = eval(msg.body.split(" ", 1)[1])  # Converte de string para dicionário
+            for recurso, quantidade in recursos_reabastecidos.items():
+                self.agent.recursos[recurso] += quantidade
+
+            print(f"{self.agent.jid} reabastecido: {self.agent.recursos}")
+
+        async def handle_disponibility(self, msg):
+            # Extrai a posição do Shelter da mensagem
+            parts = msg.body.split()
+            shelter_position = tuple(eval(" ".join(parts[1:3])))  # Exemplo: "(2, 3)"
+
+            # Calcula o custo para ir até o Shelter
+            path_to_shelter = a_star(self.agent.environment, tuple(self.agent.position), tuple(shelter_position))
+            if not path_to_shelter:
+                print(f"{self.agent.jid} não encontrou caminho para o Shelter em {shelter_position}.")
+                return
+
+            fuel_cost = len(path_to_shelter) - 1  # Cada passo consome 1 unidade de combustível
+
+            # Verifica se o veículo tem combustível suficiente
+            if not self.agent.ocupado and self.agent.recursos["combustivel"] > fuel_cost + 2:
+                # Responde como disponível se tem combustível suficiente
+                reply = Message(to=str(msg.sender))
+                reply.body = "disponivel"
+                reply.set_metadata("performative", "inform")
+                await self.send(reply)
+                print(f"{self.agent.jid} informou que está disponível para o Shelter em {shelter_position}.")
+            elif self.agent.recursos["combustivel"] <= fuel_cost + 2:
+                # Inicia o processo de reabastecimento se o combustível está insuficiente
+                print(
+                    f"{self.agent.jid} tem combustivel insuficiente para o Shelter em {shelter_position}. Indo reabastecer.")
+                await self.refill_at_depot()
+            else:
+                print(f"{self.agent.jid} está ocupado, ignorando consulta de disponibilidade.")
+
 
         async def deliver_supplies(self, entregas, posicao_shelter, shelter_jid):
             """
@@ -321,24 +358,6 @@ class SupplyVehicleAgent(Agent):
                 self.agent.environment.move_agent(tuple(self.agent.position), next_position, agent_type=8)
                 self.agent.update_position(next_position)
                 self.agent.recursos["combustivel"] -= 1
-
-                # Alerta de baixo combustível
-                if self.agent.recursos["combustivel"] <= 2:
-                    print(f"{self.agent.jid} com combustível crítico! Interrompendo entregas para reabastecimento.")
-
-                    '''
-                    # Prepara a mensagem de warning
-                    msg = Message(to=shelter_jid)  # Envia o warning ao Shelter
-                    msg.set_metadata("performative", "inform")
-                    msg.body = f"warning {self.agent.jid} combustivel_critico {self.agent.position} " + " ".join(
-                        [f"{entrega['recurso']} {entrega['quantidade']}" for entrega in entregas]
-                    )
-                    await self.send(msg)
-                    '''
-
-                    # Move para reabastecimento
-                    await self.refill_at_depot()
-                    return
 
                 await asyncio.sleep(1)  # Simula o movimento
 
@@ -375,36 +394,39 @@ class SupplyVehicleAgent(Agent):
                 print("Nenhum caminho encontrado para o depósito!")
                 return
 
+            # Move o veículo até o depósito
             for next_position in path[1:]:
                 if self.agent.environment.is_road_free(next_position):
                     self.agent.environment.move_agent(tuple(self.agent.position), next_position, agent_type=8)
                     self.agent.update_position(next_position)
-                    self.agent.recursos["combustivel"] -= 1
+                    if not self.agent.recursos["combustivel"] <= 0:
+                        self.agent.recursos["combustivel"] -= 1
                 await asyncio.sleep(1)
 
             print(f"{self.agent.jid} chegou ao depósito. Solicitando reabastecimento.")
+
+            # Inclui os recursos atuais na mensagem ao depósito
             msg = Message(to="depot@localhost")
-            msg.body = f"request combustivel {106}"  # Exemplo de solicitação
+            recursos_atual = " ".join(
+                [f"{recurso} {quantidade}" for recurso, quantidade in self.agent.recursos.items()])
+            msg.body = f"reabastecer {recursos_atual}"
             msg.set_metadata("performative", "request")
             await self.send(msg)
 
+            # Aguarda a resposta do depósito
             reply = await self.receive(timeout=10)
             if reply and reply.get_metadata("performative") == "confirm":
                 print(f"Resposta do depósito recebida: {reply.body}")
 
-                # Divide a mensagem e extrai o recurso e a quantidade
-                parts = reply.body.split()
-                recurso = parts[1]  # O recurso é o segundo elemento
-                quantidade = int(parts[2])  # A quantidade é o terceiro elemento
-
-                # Atualiza o recurso no veículo
-                if recurso in self.agent.recursos:
+                # Atualiza os recursos do veículo
+                recursos_reabastecidos = eval(reply.body.split(" ", 1)[1])  # Converte de string para dicionário
+                for recurso, quantidade in recursos_reabastecidos.items():
                     self.agent.recursos[recurso] += quantidade
-                    print(f"Veículo reabastecido: {self.agent.recursos}")
-                else:
-                    print(f"Recurso {recurso} não reconhecido no veículo!")
+
+                print(f"{self.agent.jid} reabastecido: {self.agent.recursos}")
             else:
-                print(f"{self.agent.jid}: Não foi possível reabastecer no depósito!")
+                print(f"{self.agent.jid} não conseguiu reabastecer no depósito.")
+
 
     async def setup(self):
         print("Supply Vehicle Agent iniciado")
@@ -414,7 +436,6 @@ class SupplyVehicleAgent(Agent):
     def update_position(self, new_position):
         self.position = new_position
         print(f"SupplyVehicle movido para {self.position}")
-
 
 
 class ShelterAgent(Agent):
@@ -492,28 +513,55 @@ class ShelterAgent(Agent):
 
             await asyncio.sleep(5)
 
-        async def send_request(self, recursos_necessarios):
-            unique_id = str(uuid.uuid4())  # Gera um ID único para cada pedido
+        async def check_vehicle_availability(self):
+            """Verifica quais veículos estão disponíveis."""
+            unique_id = str(uuid.uuid4())  # Gera um ID único para a verificação
 
+            # Envia uma mensagem de verificação para todos os veículos
             for i in range(1, self.agent.max_vehicles + 1):
                 vehicle_jid = f"supply_vehicle{i}@localhost"
+                msg = Message(to=vehicle_jid)
+                msg.body = f"disponibilidade {self.agent.position} {unique_id}"
+                msg.set_metadata("origin", "shelter")
+                msg.set_metadata("performative", "query")
+                await self.send(msg)
+                print(f"Verificação de disponibilidade enviada para {vehicle_jid} com ID {unique_id}.")
 
+            # Coleta as respostas
+            available_vehicles = []
+            start_time = time.time()
+            while time.time() - start_time < 5:  # Aguarda até 5 segundos pelas respostas
+                reply = await self.receive(timeout=1)
+                if reply and reply.get_metadata("performative") == "inform" and "disponivel" in reply.body:
+                    print(f"Resposta recebida de {reply.sender}: {reply.body}")
+                    available_vehicles.append(str(reply.sender))
+
+            print(f"Veículos disponíveis: {available_vehicles}")
+            return available_vehicles
+
+        async def send_request(self, recursos_necessarios):
+            available_vehicles = await self.check_vehicle_availability()
+            if not available_vehicles:
+                print("Nenhum veículo disponível para atender ao pedido.")
+                return
+
+            unique_id = str(uuid.uuid4())  # Gera um ID único para cada pedido
+
+            for vehicle_jid in available_vehicles:
                 if len(recursos_necessarios) == 2:
-                    # Envia um pedido "duplo" com dois recursos e suas quantidades
                     recursos_formatados = " ".join(
                         [f"{recurso} {quantidade}" for recurso, quantidade in recursos_necessarios.items()])
                     msg = Message(to=vehicle_jid)
-                    msg.body = f"duplo {recursos_formatados} {self.agent.position} {unique_id}"  # Inclui todos os recursos e o ID único
-                    msg.set_metadata("origin", "shelter")  # Define a origem como Shelter
+                    msg.body = f"duplo {recursos_formatados} {self.agent.position} {unique_id}"
+                    msg.set_metadata("origin", "shelter")
                     msg.set_metadata("performative", "request")
                     await self.send(msg)
                     print(f"Pedido duplo enviado para {vehicle_jid}: {recursos_formatados} com ID {unique_id}.")
                 else:
-                    # Envia um pedido "simples" com um único recurso e sua quantidade
-                    recurso, quantidade = list(recursos_necessarios.items())[0]  # Extrai o único recurso e quantidade
+                    recurso, quantidade = list(recursos_necessarios.items())[0]
                     msg = Message(to=vehicle_jid)
-                    msg.body = f"simples {recurso} {quantidade} {self.agent.position} {unique_id}"  # Inclui o recurso e o ID único
-                    msg.set_metadata("origin", "shelter")  # Define a origem como Shelter
+                    msg.body = f"simples {recurso} {quantidade} {self.agent.position} {unique_id}"
+                    msg.set_metadata("origin", "shelter")
                     msg.set_metadata("performative", "request")
                     await self.send(msg)
                     print(f"Pedido simples enviado para {vehicle_jid}: {recurso}:{quantidade} com ID {unique_id}.")
@@ -606,50 +654,8 @@ class ShelterAgent(Agent):
                         self.agent.solicitado[recurso] = False
                         print(f"Recurso {recurso} marcado como disponível para novas solicitações.")
 
-                if msg.get_metadata("performative") == "inform" and msg.body.startswith("warning"):
-
-                    print(f"Aviso recebido: {msg.body}")
-
-                    parts = msg.body.split()
-
-                    #print("PARTS: ",parts)
-
-                    vehicle_id = parts[1]
-
-                    print(f"Veículo {vehicle_id} relatou combustível crítico. Reavaliando entrega.")
-
-                    # Extrai a posição e os recursos pendentes do warning
-
-
-                    resources_data = parts[5:]  # Pula "warning", "vehicle_id" e "combustivel_critico"
-
-                    #print("RESOURCES_DATA: ", resources_data)
-
-                    for i in range(0, len(resources_data), 2):
-
-                        recurso = resources_data[i]
-
-                        quantidade = int(resources_data[i + 1])
-
-                        # Atualiza a lista de recursos pendentes
-
-                        if recurso not in self.agent.pending_resources:
-                            self.agent.pending_resources[recurso] = 0
-
-                        self.agent.pending_resources[recurso] += quantidade
-
-                    print(f"Recursos pendentes atualizados: {self.agent.pending_resources}")
-
-                    # Reinicia o processo de seleção e entrega
-
-                    self.response_collection_start = None  # Reseta a coleta de respostas
-
-                    self.collected_responses = {}  # Limpa as respostas coletadas
-
-                    await self.send_request(self.agent.pending_resources)  # Reenvia os pedidos para os veículos
-
             # Verifica se o tempo de coleta expirou
-            if self.response_collection_start and time.time() - self.response_collection_start > 15:
+            if self.response_collection_start and time.time() - self.response_collection_start > 5:
                 if self.collected_responses:  # Verifica se não há respostas coletadas
                     print(f"Processando respostas coletadas para os recursos: {list(self.collected_responses.keys())}")
                     #print("Respostas: ", self.collected_responses)
@@ -697,31 +703,6 @@ class ShelterAgent(Agent):
 
                 self.response_collection_start = None  # Reseta a coleta
 
-        async def send_request(self, recursos_necessarios):
-            unique_id = str(uuid.uuid4())  # Gera um ID único para cada pedido
-
-            for i in range(1, self.agent.max_vehicles + 1):
-                vehicle_jid = f"supply_vehicle{i}@localhost"
-
-                if len(recursos_necessarios) == 2:
-                    # Envia um pedido "duplo" com dois recursos e suas quantidades
-                    recursos_formatados = " ".join(
-                        [f"{recurso} {quantidade}" for recurso, quantidade in recursos_necessarios.items()])
-                    msg = Message(to=vehicle_jid)
-                    msg.body = f"duplo {recursos_formatados} {self.agent.position} {unique_id}"  # Inclui todos os recursos e o ID único
-                    msg.set_metadata("origin", "shelter")  # Define a origem como Shelter
-                    msg.set_metadata("performative", "request")
-                    await self.send(msg)
-                    print(f"Pedido duplo enviado para {vehicle_jid}: {recursos_formatados} com ID {unique_id}.")
-                else:
-                    # Envia um pedido "simples" com um único recurso e sua quantidade
-                    recurso, quantidade = list(recursos_necessarios.items())[0]  # Extrai o único recurso e quantidade
-                    msg = Message(to=vehicle_jid)
-                    msg.body = f"simples {recurso} {quantidade} {self.agent.position} {unique_id}"  # Inclui o recurso e o ID único
-                    msg.set_metadata("origin", "shelter")  # Define a origem como Shelter
-                    msg.set_metadata("performative", "request")
-                    await self.send(msg)
-                    print(f"Pedido simples enviado para {vehicle_jid}: {recurso}:{quantidade} com ID {unique_id}.")
 
         def evaluate_best_vehicles(self):
             best_duplo = None
@@ -807,40 +788,40 @@ class ShelterAgent(Agent):
         #self.add_behaviour(self.response_consumption_behavior)
 
 class DepotAgent(Agent):
-    def __init__(self, jid, password, position, initial_resources):
+    def __init__(self, jid, password, position, vehicle_max_resources):
         super().__init__(jid, password)
         self.position = position
-        self.resources = initial_resources  # {"agua": 500, "comida": 500, ...}
+        self.vehicle_max_resources = vehicle_max_resources
 
     class HandleRefillRequestsBehaviour(CyclicBehaviour):
         async def run(self):
-            print("Depot aguardando solicitações de reabastecimento...")
-
             msg = await self.receive(timeout=1)
             if msg and msg.get_metadata("performative") == "request":
                 parts = msg.body.split()
-                recurso = parts[1]
-                quantidade = int(parts[2])
-                vehicle_jid = str(msg.sender)
+                comando = parts[0]  # O primeiro elemento é o comando, ex.: "reabastecer"
 
-                if self.agent.resources[recurso] >= quantidade:
-                    self.agent.resources[recurso] -= quantidade
-                    print(f"Depot forneceu {quantidade} de {recurso} para {vehicle_jid}.")
+                if comando == "reabastecer":
+                    recursos_atual = dict(zip(parts[1::2], map(int, parts[2::2])))  # Converte para um dicionário
+                    vehicle_jid = str(msg.sender)
 
+                    # Calcula os recursos necessários para completar o máximo
+                    recursos_abastecidos = {}
+                    for recurso, maximo in self.agent.vehicle_max_resources.items():
+                        atual = recursos_atual.get(recurso, 0)
+                        quantidade_abastecida = maximo - atual
+                        if quantidade_abastecida > 0:
+                            recursos_abastecidos[recurso] = quantidade_abastecida
+
+                    print(f"Depot irá reabastecer {vehicle_jid}: {recursos_abastecidos}")
+
+                    # Envia a resposta ao veículo
                     reply = Message(to=vehicle_jid)
-                    reply.body = f"resposta {recurso} {quantidade} fornecidos."
+                    reply.body = f"resposta {recursos_abastecidos}"  # Dicionário dos recursos reabastecidos
                     reply.set_metadata("performative", "confirm")
-                    reply.set_metadata("origin", "depot")  # Para pedidos do Depot
-                    await self.send(reply)
-                else:
-                    print(f"Depot sem recursos suficientes de {recurso}.")
-                    reply = Message(to=vehicle_jid)
-                    reply.body = f"Recursos insuficientes de {recurso}."
-                    reply.set_metadata("performative", "refuse")
-                    reply.set_metadata("origin", "depot")  # Para pedidos do Depot
+                    reply.set_metadata("origin", "depot")
                     await self.send(reply)
 
     async def setup(self):
-        print(f"Depot iniciado na posição {self.position}. Recursos iniciais: {self.resources}")
+        print(f"Depot iniciado na posição {self.position}.")
+        print(f"Limites máximos para veículos: {self.vehicle_max_resources}")
         self.add_behaviour(self.HandleRefillRequestsBehaviour())
-

@@ -7,15 +7,15 @@ async def main():
     env = Environment(size=10)
 
     # Criar veículos de suprimento
-    supply_vehicle_positions = [[4, 4], [5, 6], [7, 6], [4, 0]]
+    supply_vehicle_positions = [[1, 1], [8, 9], [8, 8], [4, 0]]
     supply_vehicles = []
 
     # Criar os veículos com os recursos especificados
     initial_resources = [
-        {"agua_comida": 60,  "medicamentos": 60,  "combustivel": 100},  # Veículo 1
+        {"agua_comida": 59,  "medicamentos": 60,  "combustivel": 100},  # Veículo 1
         {"agua_comida": 0,  "medicamentos": 40,  "combustivel": 100},  # Veículo 2
-        {"agua_comida": 00,  "medicamentos": 20,  "combustivel": 100},
-        {"agua_comida": 00,  "medicamentos": 0,  "combustivel": 100}
+        {"agua_comida": 0,  "medicamentos": 20,  "combustivel": 100},
+        {"agua_comida": 0,  "medicamentos": 20,  "combustivel": 100}
     ]
 
     for i, (position, resources) in enumerate(zip(supply_vehicle_positions, initial_resources), start=1):
@@ -30,12 +30,12 @@ async def main():
 
     # Criar o depósito central
     depot_position = [0, 0]  # Posição inicial do depósito
-    depot_resources = {"agua": 500, "comida": 500, "medicamentos": 300, "bens": 200, "combustivel": 1000}
-    depot = DepotAgent("depot@localhost", "password", depot_position, depot_resources)
+    vehicle_max_resources = {"agua_comida": 200, "medicamentos": 100, "combustivel": 100}
+    depot = DepotAgent("depot@localhost", "password", depot_position, vehicle_max_resources)
     await depot.start()
 
     # Criar os abrigos com capacidades e posições diferentes
-    shelter1_position = [3, 4]
+    shelter1_position = [7, 7]
     shelter1 = ShelterAgent("shelter1@localhost", "password", shelter1_position, len(supply_vehicle_positions))
     await shelter1.start()
 
@@ -57,12 +57,12 @@ async def main():
     await asyncio.sleep(5)
     print("\n[Evento] Shelter 1 esgota seus recursos.")
     shelter1.agua_comida = 0
-    shelter2.medicamentos = 0
+    #shelter2.medicamentos = 0
     print("Shelter 1 agora sem água e comida.")
 
-    await asyncio.sleep(50)
+    await asyncio.sleep(12)
     print("\n[Evento] Shelter 2 esgota seus recursos.")
-    #shelter1.agua_comida = 0
+    #shelter2.agua_comida = 0
     #shelter2.medicamentos = 0
     print("Shelter 2 agora sem água e medicamentos.")
 
