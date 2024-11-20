@@ -5,7 +5,6 @@ from spade.agent import Agent
 from spade.behaviour import CyclicBehaviour, OneShotBehaviour
 from spade.message import Message
 import ast  # Para usar ast.literal_eval
-from ambiente import Environment
 import asyncio
 from pathfinding import a_star
 
@@ -28,6 +27,8 @@ class ResponderAgent(Agent):
 
             # Recebe a mensagem de pedido de ajuda
             msg = await self.receive(timeout=10)
+            print("Mensagens de socorro: ",msg)
+
             if msg and msg.get_metadata("performative") == "request":
                 parts = msg.body.split()
                 #print("PARTS: ", parts)
@@ -68,9 +69,11 @@ class ResponderAgent(Agent):
         async def run(self):
             """Lida com os pedidos de ajuda, priorizando graus mais altos."""
             if self.agent.ocupado:
+                print("Estou ocupado")
                 return  # Ignora se o agente está ocupado
 
             msg = await self.receive(timeout=5)
+            print("Mensagem a sorte: ", msg)
 
             # Ordena os graus de urgência em ordem decrescente (grau mais alto primeiro)
             for grau in sorted(self.agent.pedidos.keys(), reverse=True):
@@ -103,7 +106,7 @@ class ResponderAgent(Agent):
 
             # Aguarda a resposta do Civilian
             reply = await self.receive(timeout=5)
-            #print("REPLY de atendido: ", reply)
+            print("Resposta do atendido: ", reply)
             if reply and reply.body == "atendido":
                 print(f"O Civilian {civilian_id} informou que já foi atendido.")
                 return True
@@ -121,24 +124,19 @@ class ResponderAgent(Agent):
             msg.body = f"Atendido {self.agent.position}"
             msg.set_metadata("performative", "inform")
             await self.send(msg)
-            print(f"Mensagem de atendimento enviada ao Civilian {civil_id}.")
+            print(f"O {self.agent.jid} mandou mensagem de atendimento enviada ao Civilian {civil_id}.")
 
             # Aguarda uma resposta do Civilian
             reply = await self.receive(timeout=10)  # Espera até 10 segundos por uma resposta
-            #print("REPLY: ",reply)
+            print("REPLYffyfyfyfyf: ", reply)
             if reply and reply.get_metadata("performative") == "confirm" and reply.body == "Confirmado":
                 print(f"Responder {self.agent.jid}: Civilian {civil_id} confirmou o atendimento. Prosseguindo.")
+
             else:
                 print(
                     f"Responder {self.agent.jid}: Nenhuma confirmação recebida do Civilian {civil_id}. Tentando outro pedido.")
-                # Se nenhuma resposta foi recebida, escolhe outro pedido
-                closest_pedido = self.find_closest_pedido(grau)
-                if not closest_pedido:
-                    print(f"Responder {self.agent.jid}: Nenhum outro pedido disponível no grau {grau}.")
-                    return  # Sai se não houver mais pedidos no grau
-                pedido = closest_pedido
-                print("CLOSEST PEDIDO: ", pedido)
-                return
+
+                return  # Sai se não houver mais pedidos no grau
 
             # Calcula o caminho até o Civilian
             path = self.agent.calculate_path(civil_position)
@@ -147,7 +145,7 @@ class ResponderAgent(Agent):
                 return
 
             # Move até o Civilian
-            await self.agent.follow_path(path, civil_position)
+            await self.agent.follow_path(path, tuple(civil_position))
 
             # Confirmar chegada e solicitar shelter
             await self.confirm_arrival(civil_id)
@@ -200,12 +198,12 @@ class ResponderAgent(Agent):
         """Segue o caminho calculado até a posição alvo."""
         for next_position in path[1:]:
             if next_position == target_position:
-                self.environment.move_agent(tuple(self.position), next_position, agent_type=7)
+                self.environment.move_agent(tuple(self.position), next_position, agent_type=3)
                 self.update_position(next_position)
                 print(f"{self.jid} chegou ao civilian.")
 
-            if self.environment.is_road_free(next_position):
-                self.environment.move_agent(tuple(self.position), next_position, agent_type=7)
+            elif self.environment.is_road_free(next_position):
+                self.environment.move_agent(tuple(self.position), next_position, agent_type=3)
                 self.update_position(next_position)
                 print(f"{self.jid} movido para {next_position}.")
 
@@ -257,7 +255,7 @@ class CivilianAgent(Agent):
                         responder_id = str(msg.sender)
                         responder_position = eval(" ".join(parts[1:]))  # Exemplo: posição no metadado
                         respostas.append({"id": responder_id, "position": responder_position})
-                        print(respostas)
+                        print(f"{self.agent.jid} {respostas}")
 
             if respostas:
                 # Avalia qual responder está mais próximo

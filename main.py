@@ -1,29 +1,51 @@
 import asyncio
 from agentes import ResponderAgent, CivilianAgent, SupplyVehicleAgent, ShelterAgent, DepotAgent
 from ambiente import Environment
+import pygame
 
 async def main():
     # Inicializar o ambiente
     env = Environment(size=10)
-
-    civilian_position1 = [0, 0]  # Posição inicial do depósito
-    civilian1 = CivilianAgent("civilian1@localhost", "password", civilian_position1)
-    civilian1.grau_urgencia = 4
-    await civilian1.start()
-
-    civilian_position2 = [4, 4]  # Posição inicial do depósito
-    civilian2 = CivilianAgent("civilian2@localhost", "password", civilian_position2)
-    civilian2.grau_urgencia = 4
-    await civilian2.start()
+    env.draw_city()  # Desenhar mapa inicial
 
     responder_position = [8, 8]  # Posição inicial do depósito
+    env.move_agent(responder_position,responder_position,agent_type=3)
     responder = ResponderAgent("responder1@localhost", "password", responder_position, env)
     await responder.start()
 
     responder_position2 = [7, 7]  # Posição inicial do depósito
+    env.move_agent(responder_position2, responder_position2, agent_type=3)
     responder2 = ResponderAgent("responder2@localhost", "password", responder_position2, env)
     await responder2.start()
 
+    civilian_position1 = [4, 4]  # Posição inicial do depósito
+    env.move_agent(civilian_position1, civilian_position1, agent_type=2)
+    civilian1 = CivilianAgent("civilian1@localhost", "password", civilian_position1)
+    civilian1.grau_urgencia = 4
+    await civilian1.start()
+
+    #await asyncio.sleep(5)
+    civilian_position2 = [0, 0]  # Posição inicial do depósito
+    env.move_agent(civilian_position2, civilian_position2, agent_type=2)
+    civilian2 = CivilianAgent("civilian2@localhost", "password", civilian_position2)
+    civilian2.grau_urgencia = 4
+    await civilian2.start()
+    '''
+    await asyncio.sleep(15)
+    civilian_position3 = [6, 6]  # Posição inicial do depósito
+    env.move_agent(civilian_position3, civilian_position3, agent_type=2)
+    civilian3 = CivilianAgent("civilian3@localhost", "password", civilian_position3)
+    civilian3.grau_urgencia = 2
+    await civilian3.start()
+
+
+    await asyncio.sleep(25)
+    civilian_position4 = [2, 2]  # Posição inicial do depósito
+    env.move_agent(civilian_position4, civilian_position4, agent_type=2)
+    civilian4 = CivilianAgent("civilian4@localhost", "password", civilian_position4)
+    civilian4.grau_urgencia = 1
+    await civilian4.start()
+    '''
     '''
     # Criar veículos de suprimento
     supply_vehicle_positions = [[1, 1], [8, 9], [8, 8], [4, 0]]
@@ -100,14 +122,27 @@ async def main():
     env.print_city_map()
     '''
 
-    await asyncio.sleep(10)
-    #await civilian1.stop()
+    async def game_loop():
+        while True:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    return
 
+            await asyncio.sleep(0.1)  # Pequeno delay para não travar o programa
 
-    await asyncio.sleep(50)
+    # Rodar a simulação e o loop do jogo
+    await asyncio.gather(
+        game_loop(),
+        asyncio.sleep(60)  # Simulação principal
+    )
+
     await responder.stop()
+    await responder2.stop()
     await civilian1.stop()
     await civilian2.stop()
+    await civilian3.stop()
+    await civilian4.stop()
 
 if __name__ == "__main__":
     asyncio.run(main())
