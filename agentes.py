@@ -17,18 +17,30 @@ class ResponderAgent(Agent):
         self.candidates = []  # Lista de pedidos analisados
         self.current_request = None  # Pedido atualmente em processamento
         self.max_responders = max_responders
+        self.coleta_timer = 0  # Timer para gerenciar a coleta de pedidos
+
 
     class ResponderBehaviour(CyclicBehaviour):
         async def run(self):
-            msg = await self.receive(timeout=5)  # Escuta mensagens de civilians
+            # Escuta mensagens de civilians do tipo "request"
+            msg = await self.receive(timeout=1)  # Reduz o timeout para processar com mais frequência
             if msg and msg.get_metadata("performative") == "request":
                 print(f"Pedido recebido: {msg.body}")
                 self.process_request(msg)
 
-                # Se o responder estiver disponível, inicia a negociação
-                if not self.agent.ocupado and not getattr(self.agent, "negociando", False) and self.agent.candidates:
-                    print(f"{self.agent.jid} está a iniciar a negociação.")
-                    self.agent.negociando = True  # Marca como negociando
+            # Verifica se está na janela de coleta ou se já é hora de negociar
+            if not getattr(self.agent, "negociando", False):
+                #print("Entrou")
+                if self.agent.coleta_timer == 0:
+                    # Inicia o timer de coleta
+                    self.agent.coleta_timer = asyncio.get_event_loop().time()
+                    print(f"{self.agent.jid}: Janela de coleta iniciada.")
+
+                elapsed_time = asyncio.get_event_loop().time() - self.agent.coleta_timer
+                if elapsed_time >= 5:  # 5 segundos para coletar pedidos
+                    print(f"{self.agent.jid}: Janela de coleta encerrada. Iniciando negociação.")
+                    self.agent.coleta_timer = 0  # Reseta o timer
+                    self.agent.negociando = True
                     self.agent.add_behaviour(self.agent.NegotiationBehaviour())
 
         def process_request(self, msg):
@@ -54,8 +66,16 @@ class ResponderAgent(Agent):
 
     class NegotiationBehaviour(OneShotBehaviour):
         async def run(self):
+
+            #print("Candidatos: ", self.agent.candidates)
+
             # Seleciona o pedido mais próximo
-            best_candidate = min(self.agent.candidates, key=lambda x: x["distance"], default=None)
+            best_candidate = max(
+                self.agent.candidates,
+                key=lambda x: (x["urgency"], -x["distance"]),  # Prioriza urgência; desempata pela menor distância
+                default=None
+            )
+
             if not best_candidate:
                 print("Nenhum pedido para negociar.")
                 self.agent.negociando = False  # Libera o estado de negociação
@@ -88,23 +108,19 @@ class ResponderAgent(Agent):
 
             #print("REPLIES: ",replies)
 
-            # Verifica se há conflitos (ex.: outro responder mais próximo)
+            # Avalia as respostas
             if any("mais próximo" in r for r in replies):
                 print(
-                    f"{self.agent.jid} desistiu do pedido {best_candidate['civilian_id']} devido a outro responder mais próximo.")
-                self.agent.negociando = False  # Libera o estado de negociação
-                self.agent.candidates = [c for c in self.agent.candidates if c != best_candidate]
-                return
+                    f"{self.agent.jid}: Outro responder mais próximo foi escolhido para {best_candidate['civilian_id']}.")
+            else:
+                print(f"{self.agent.jid}: Atendendo {best_candidate['civilian_id']}.")
+                self.agent.current_request = best_candidate
+                self.agent.add_behaviour(self.agent.ProcessingBehaviour())
 
-            # Caso contrário, processa o pedido
-            print(f"{self.agent.jid} vai atender {best_candidate['civilian_id']}.")
-            self.agent.current_request = best_candidate
-            self.agent.candidates = [c for c in self.agent.candidates if c != best_candidate]
-            self.agent.ocupado = True
-            self.agent.negociando = False  # Libera o estado de negociação
-
-            behaviour = self.agent.ProcessingBehaviour()
-            await self.agent.add_behaviour(behaviour)
+            # Finaliza negociação
+            self.agent.negociando = False
+            self.agent.candidates = []  # Limpa o buffer de candidatos
+            self.agent.coleta_timer = 0  # Permite uma nova rodada de coleta
 
     class ProcessingBehaviour(OneShotBehaviour):
         async def run(self):
@@ -113,7 +129,19 @@ class ResponderAgent(Agent):
                 print("Nenhum pedido para processar.")
                 return
 
-            print(f"{self.agent.jid} está a caminho do Civilian {pedido['civilian_id']}...")
+            civilian_id = pedido["civilian_id"]
+            position = tuple(pedido["position"])
+
+            print(f"{self.agent.jid}: A caminho do Civilian {civilian_id}...")
+
+            # Envia mensagem para notificar o Civilian que o pedido está "em progresso"
+            progress_msg = Message(to=str(civilian_id))
+            progress_msg.body = "in_progress"
+            progress_msg.set_metadata("performative", "inform")
+            await self.send(progress_msg)
+            print(f"{self.agent.jid}: Notificou {civilian_id} que o pedido está em progresso.")
+
+
             path = self.agent.calculate_path(pedido["position"])
             if not path:
                 print(f"{self.agent.jid} não conseguiu calcular o caminho para {pedido['civilian_id']}.")
@@ -220,11 +248,12 @@ class CivilianAgent(Agent):
         self.urgency = urgency
         self.max_responders = max_responders
         self.attended = False  # Estado de atendimento
+        self.in_progress = False  # Estado de pedido em progresso
 
     class SendHelpRequestBehaviour(CyclicBehaviour):
         async def run(self):
-            if self.agent.attended:
-                return  # Civilian já foi atendido
+            if self.agent.attended or self.agent.in_progress:
+                return  # Não envia novos pedidos se já está a ser atendido ou em progresso
 
             # Gera um pedido de socorro
             urgency = self.agent.urgency
@@ -239,6 +268,7 @@ class CivilianAgent(Agent):
                 msg.set_metadata("performative", "request")
                 await self.send(msg)
                 print(f"{self.agent.jid} enviou pedido de socorro para {responder_jid}. Urgência: {urgency}.")
+
             await asyncio.sleep(10)  # Espera antes de reenviar
 
     class UpdateStateBehaviour(CyclicBehaviour):
@@ -246,11 +276,20 @@ class CivilianAgent(Agent):
             if self.agent.attended:
                 return  # Civilian já foi atendido
 
-            # Aguarda uma mensagem de confirmação do responder
-            msg = await self.receive(timeout=10)
-            if msg and msg.get_metadata("performative") == "inform":
-                print(f"{self.agent.jid} foi atendido por {msg.sender}.")
-                self.agent.attended = True
+            # Aguarda uma mensagem do responder
+            msg = await self.receive(timeout=5)
+            if not msg or msg.get_metadata("performative") != "inform":
+                return  # Ignora mensagens irrelevantes
+
+            if msg.body == "in_progress":
+                print(f"{self.agent.jid}: Pedido em progresso. Responder {msg.sender} a caminho.")
+                self.agent.in_progress = True  # Atualiza o estado para "em progresso"
+                return
+
+            if msg.body == "atendido":
+                print(f"{self.agent.jid}: Pedido atendido por {msg.sender}.")
+                self.agent.attended = True  # Atualiza o estado para "atendido"
+                self.agent.in_progress = False  # Libera o estado "em progresso"
 
 
     async def setup(self):

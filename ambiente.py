@@ -50,7 +50,7 @@ class Environment:
         # Verifica o que estava na posição antiga antes de colocar o agente
         old_value = self.city_map[agent_pos[0]][agent_pos[1]]
 
-        print("OLDVALUE: ",old_value)
+        #print("OLDVALUE: ",old_value)
 
         # Atualiza a posição antiga do agente para o valor original (shelter ou vazio)
         if old_value == 5 or old_value == 9:

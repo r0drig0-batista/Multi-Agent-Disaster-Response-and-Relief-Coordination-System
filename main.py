@@ -29,6 +29,12 @@ async def main():
     civilian2 = CivilianAgent("civilian2@localhost", "password", civilian_position2,2,2)
     await civilian2.start()
 
+    civilian_position3 = [5, 6]  # Posição inicial do depósito
+    env.move_agent(civilian_position3, civilian_position3, agent_type=2)
+    civilian3 = CivilianAgent("civilian3@localhost", "password", civilian_position3, 2, 2)
+    await civilian3.start()
+
+
     '''
     # Criar veículos de suprimento
     supply_vehicle_positions = [[0, 0], [0, 0], [0, 0], [0, 0]]
