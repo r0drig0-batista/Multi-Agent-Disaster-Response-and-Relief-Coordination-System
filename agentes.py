@@ -1,3 +1,4 @@
+import random
 import time
 import uuid
 
@@ -22,6 +23,8 @@ class ResponderAgent(Agent):
 
     class ResponderBehaviour(CyclicBehaviour):
         async def run(self):
+            if self.agent.ocupado:
+                return
             # Escuta mensagens de civilians do tipo "request"
             msg = await self.receive(timeout=1)  # Reduz o timeout para processar com mais frequência
             if msg and msg.get_metadata("performative") == "request":
@@ -66,58 +69,87 @@ class ResponderAgent(Agent):
 
     class NegotiationBehaviour(OneShotBehaviour):
         async def run(self):
+            print(f"{self.agent.jid} iniciou a negociação com candidatos: {self.agent.candidates}")
 
-            #print("Candidatos: ", self.agent.candidates)
+            while self.agent.candidates:
 
-            # Seleciona o pedido mais próximo
-            best_candidate = max(
-                self.agent.candidates,
-                key=lambda x: (x["urgency"], -x["distance"]),  # Prioriza urgência; desempata pela menor distância
-                default=None
-            )
+                #print("dsadasdaCANDIDDSDADSA: ", self.agent.candidates)
 
-            if not best_candidate:
-                print("Nenhum pedido para negociar.")
-                self.agent.negociando = False  # Libera o estado de negociação
-                return
+                # Seleciona o pedido mais próximo
+                # Filtra os candidatos com a maior urgência
+                highest_urgency = max(self.agent.candidates, key=lambda x: x["urgency"], default={"urgency": None})[
+                    "urgency"]
+                if highest_urgency is None:
+                    print("Nenhum pedido restante para negociar.")
+                    break
 
-            # Envia proposta para todos os outros responders
-            unique_id = str(uuid.uuid4())  # Gera um ID único para este processo
-            for i in range(1, self.agent.max_responders + 1):  # Substituir com o número de responders
-                responder_jid = f"responder{i}@localhost"
-                #print("RESPONDER: ",responder_jid)
-                #print("AGETNJID: ", self.agent.jid)
-                if str(responder_jid) != str(self.agent.jid):  # Evita enviar para si mesmo
-                    msg = Message(to=str(responder_jid))
-                    msg.body = f"proposta {best_candidate['civilian_id']} {best_candidate['distance']} {unique_id}"
-                    msg.set_metadata("performative", "propose")
-                    await self.send(msg)
-                    print(f"Proposta enviada para {responder_jid} sobre {best_candidate['civilian_id']} "
-                          f"com distância {best_candidate['distance']}.")
+                # Filtra apenas os candidatos com a maior urgência
+                urgent_candidates = [c for c in self.agent.candidates if c["urgency"] == highest_urgency]
 
-            # Aguarda respostas dos outros responders
-            replies = []
-            start_time = asyncio.get_event_loop().time()
-            while asyncio.get_event_loop().time() - start_time < 5:  # 5 segundos para receber respostas
-                reply = await self.receive(timeout=1)
-                #print("Reply: ", reply)
-                if reply and reply.get_metadata("performative") == "propose-reply":
-                    replies.append(reply.body)
-                    print(f"Resposta recebida: {reply.body}")
+                # Entre os candidatos com maior urgência, encontra os mais próximos
+                min_distance = min(c["distance"] for c in urgent_candidates)
+                closest_candidates = [c for c in urgent_candidates if c["distance"] == min_distance]
 
+                # Escolhe aleatoriamente entre os candidatos mais próximos
+                best_candidate = random.choice(closest_candidates)
+                print(f"Candidato escolhido: {best_candidate}")
 
-            #print("REPLIES: ",replies)
+                if not best_candidate:
+                    print("Nenhum pedido restante para negociar.")
+                    break
 
-            # Avalia as respostas
-            if any("mais próximo" in r for r in replies):
-                print(
-                    f"{self.agent.jid}: Outro responder mais próximo foi escolhido para {best_candidate['civilian_id']}.")
-            else:
-                print(f"{self.agent.jid}: Atendendo {best_candidate['civilian_id']}.")
-                self.agent.current_request = best_candidate
-                self.agent.add_behaviour(self.agent.ProcessingBehaviour())
+                # Envia proposta para todos os outros responders
+                unique_id = str(uuid.uuid4())  # Gera um ID único para este processo
+                for i in range(1, self.agent.max_responders + 1):  # Substituir com o número de responders
+                    responder_jid = f"responder{i}@localhost"
+                    if str(responder_jid) != str(self.agent.jid):  # Evita enviar para si mesmo
+                        msg = Message(to=str(responder_jid))
+                        msg.body = f"proposta {best_candidate['civilian_id']} {best_candidate['distance']} {unique_id}"
+                        msg.set_metadata("performative", "propose")
+                        await self.send(msg)
+                        print(f"Proposta enviada para {responder_jid} sobre {best_candidate['civilian_id']} "
+                              f"com distância {best_candidate['distance']}.")
+
+                #print("dsadasdaCANDIDDSDADSA: ", self.agent.candidates)
+
+                # Aguarda respostas dos outros responders
+                replies = []
+                start_time = asyncio.get_event_loop().time()
+                while asyncio.get_event_loop().time() - start_time < 5:  # 5 segundos para receber respostas
+                    reply = await self.receive(timeout=1)
+                    if reply and reply.get_metadata("performative") == "propose-reply":
+                        replies.append(reply.body)
+                        print(f"Resposta recebida: {reply.body}")
+
+                #print("dsadasdaCANDIDDSDADSA: ", self.agent.candidates)
+                # Limpa duplicados após a primeira metade do processo
+                unique_candidates = []
+                for candidate in self.agent.candidates:
+                    if candidate not in unique_candidates:
+                        unique_candidates.append(candidate)
+                self.agent.candidates = unique_candidates  # Atualiza com a lista sem duplicados
+
+                #print("CANDIDDSDADSA: ", self.agent.candidates)
+
+                # Avalia as respostas
+                if any("mais próximo" in r for r in replies):
+                    print(
+                        f"{self.agent.jid}: Outro responder mais próximo foi escolhido para {best_candidate['civilian_id']}."
+                    )
+                    #print("CANDIDDSDADSA: ",self.agent.candidates)
+                    # Remove o candidato rejeitado
+                    self.agent.candidates.remove(best_candidate)
+                    print(f"{self.agent.jid}: Reavaliando candidatos restantes: {self.agent.candidates}")
+                    continue  # Volta para o próximo candidato
+                else:
+                    print(f"{self.agent.jid}: Atendendo {best_candidate['civilian_id']}.")
+                    self.agent.current_request = best_candidate
+                    self.agent.add_behaviour(self.agent.ProcessingBehaviour())
+                    self.agent.ocupado=True
+                    break
 
             # Finaliza negociação
+            print(f"{self.agent.jid}: Negociação finalizada.")
             self.agent.negociando = False
             self.agent.candidates = []  # Limpa o buffer de candidatos
             self.agent.coleta_timer = 0  # Permite uma nova rodada de coleta
@@ -158,6 +190,67 @@ class ResponderAgent(Agent):
             msg.set_metadata("performative", "inform")
             await self.send(msg)
             print(f"{self.agent.jid} informou {pedido['civilian_id']} que o pedido foi atendido.")
+
+            # Etapa de transporte para o Shelter
+            print(f"{self.agent.jid}: Solicitando disponibilidade de Shelters para transportar {civilian_id}.")
+            # Envia mensagem para todos os Shelters
+            shelter_replies = []
+            for i in range(1, self.agent.max_responders + 1):  # Substitua por max_shelters ou similar
+                shelter_jid = f"shelter{i}@localhost"
+                shelter_msg = Message(to=shelter_jid)
+                shelter_msg.body = f"solicitação {civilian_id} posição {position}"
+                shelter_msg.set_metadata("performative", "query")
+                await self.send(shelter_msg)
+                print(f"{self.agent.jid}: Enviou solicitação de transporte para {shelter_jid}.")
+
+            # Aguarda respostas dos Shelters
+            start_time = asyncio.get_event_loop().time()
+            while asyncio.get_event_loop().time() - start_time < 5:  # Espera até 5 segundos
+                reply = await self.receive(timeout=1)
+                if reply and reply.get_metadata("performative") == "inform":
+                    shelter_replies.append(reply.body)
+                    print(f"Resposta recebida de {reply.sender}: {reply.body}")
+
+            if not shelter_replies:
+                print(f"{self.agent.jid}: Nenhuma resposta de Shelters. Concluindo sem transporte.")
+                self.agent.ocupado = False
+                return
+
+            # Escolhe o Shelter mais próximo com base nas respostas
+            best_shelters = []
+            min_distance = float("inf")
+            for shelter_info in shelter_replies:
+                parts = shelter_info.split()  # Supõe que posição está no corpo da mensagem
+                shelter_position = eval(" ".join(parts[1:3]))
+
+                distance = abs(self.agent.position[0] - shelter_position[0]) + abs(
+                    self.agent.position[1] - shelter_position[1])
+
+                # Atualiza a lista de melhores shelters
+                if distance < min_distance:
+                    min_distance = distance
+                    best_shelters = [shelter_position]  # Reinicia a lista com o novo menor
+                elif distance == min_distance:
+                    best_shelters.append(shelter_position)  # Adiciona ao empate
+
+            if not best_shelters:
+                print(f"{self.agent.jid}: Nenhum Shelter adequado encontrado.")
+                self.agent.ocupado = False
+                return
+
+            best_shelter = random.choice(best_shelters)
+            print(f"{self.agent.jid}: Levando {civilian_id} para o Shelter em {best_shelter}.")
+
+            # Calcula o caminho até o Shelter
+            path_to_shelter = self.agent.calculate_path(best_shelter)
+            if not path_to_shelter:
+                print(f"{self.agent.jid} não conseguiu calcular o caminho para o Shelter em {best_shelter}.")
+                self.agent.ocupado = False
+                return
+
+            # Segue o caminho até o Shelter
+            await self.agent.follow_path(path_to_shelter, tuple(best_shelter))
+            print(f"{self.agent.jid}: Chegou ao Shelter em {best_shelter}. Transporte concluído.")
 
             # Atualiza o estado e limpa o pedido atual
             self.agent.current_request = None
@@ -211,7 +304,7 @@ class ResponderAgent(Agent):
         """Segue o caminho calculado até a posição alvo."""
         for next_position in path[1:]:
             if next_position == target_position:
-                self.environment.move_agent(tuple(self.position), next_position, agent_type=3)
+                self.environment.move_agent(tuple(self.position), next_position, self.environment.city_map[target_position[0]][target_position[1]])
                 self.update_position(next_position)
                 print(f"{self.jid} chegou ao civilian.")
 
@@ -741,6 +834,14 @@ class ShelterAgent(Agent):
             # Recebe e organiza mensagens de resposta
             msg = await self.receive(timeout=1)  # Verifica mensagens com timeout
             #print("MSG: ",msg)
+
+            if msg and msg.get_metadata("performative") == "query" and self.agent.pessoas < 50:
+                reply = Message(to=str(msg.sender))
+                reply.body = f"disponível {self.agent.position}"
+                reply.set_metadata("performative", "inform")
+                await self.send(reply)
+                print(f"{self.agent.jid}: Respondeu a {msg.sender} com posição {self.agent.position}.")
+
             if msg:
                 if msg.get_metadata("performative") == "response":
                     print(f"Resposta recebida de {msg.sender}: {msg.body}")
@@ -812,6 +913,8 @@ class ShelterAgent(Agent):
                         self.agent.resources_pending[recurso] = True
                         self.agent.solicitado[recurso] = False
                         print(f"Recurso {recurso} marcado como disponível para novas solicitações.")
+
+
 
             # Verifica se o tempo de coleta expirou
             if self.response_collection_start and time.time() - self.response_collection_start > 5:
