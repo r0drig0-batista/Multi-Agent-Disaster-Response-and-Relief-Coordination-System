@@ -8,50 +8,28 @@ async def main():
     env = Environment(size=10)
     env.draw_city()  # Desenhar mapa inicial
 
-    '''
     responder_position = [8, 8]  # Posição inicial do depósito
     env.move_agent(responder_position,responder_position,agent_type=3)
-    responder = ResponderAgent("responder1@localhost", "password", responder_position, env)
+    responder = ResponderAgent("responder1@localhost", "password", responder_position, 2, env)
     await responder.start()
 
-    responder_position2 = [7, 7]  # Posição inicial do depósito
+    responder_position2 = [5, 5]  # Posição inicial do depósito
     env.move_agent(responder_position2, responder_position2, agent_type=3)
-    responder2 = ResponderAgent("responder2@localhost", "password", responder_position2, env)
+    responder2 = ResponderAgent("responder2@localhost", "password", responder_position2, 2, env)
     await responder2.start()
 
     civilian_position1 = [4, 4]  # Posição inicial do depósito
     env.move_agent(civilian_position1, civilian_position1, agent_type=2)
-    civilian1 = CivilianAgent("civilian1@localhost", "password", civilian_position1)
-    civilian1.grau_urgencia = 4
+    civilian1 = CivilianAgent("civilian1@localhost", "password", civilian_position1,2,2)
     await civilian1.start()
 
     #await asyncio.sleep(5)
-    civilian_position2 = [0, 0]  # Posição inicial do depósito
+    civilian_position2 = [9, 8]  # Posição inicial do depósito
     env.move_agent(civilian_position2, civilian_position2, agent_type=2)
-    civilian2 = CivilianAgent("civilian2@localhost", "password", civilian_position2)
-    civilian2.grau_urgencia = 4
+    civilian2 = CivilianAgent("civilian2@localhost", "password", civilian_position2,2,2)
     await civilian2.start()
 
-    await asyncio.sleep(15)
-    civilian_position3 = [3, 3]  # Posição inicial do depósito
-    env.move_agent(civilian_position3, civilian_position3, agent_type=2)
-    civilian3 = CivilianAgent("civilian3@localhost", "password", civilian_position3)
-    civilian3.grau_urgencia = 2
-    await civilian3.start()
-
-
-    await asyncio.sleep(25)
-    civilian_position5 = [6, 6]  # Posição inicial do depósito
-    env.move_agent(civilian_position5, civilian_position5, agent_type=2)
-    civilian5 = CivilianAgent("civilian5@localhost", "password", civilian_position5)
-    civilian5.grau_urgencia = 4
-    civilian_position4 = [2, 2]  # Posição inicial do depósito
-    env.move_agent(civilian_position4, civilian_position4, agent_type=2)
-    civilian4 = CivilianAgent("civilian4@localhost", "password", civilian_position4)
-    civilian4.grau_urgencia = 1
-    await civilian4.start()
     '''
-
     # Criar veículos de suprimento
     supply_vehicle_positions = [[0, 0], [0, 0], [0, 0], [0, 0]]
     supply_vehicles = []
@@ -122,6 +100,7 @@ async def main():
 
     print("\nEstado final do mapa:")
     env.print_city_map()
+    '''
 
     async def game_loop():
         while True:
@@ -139,11 +118,15 @@ async def main():
     )
 
     # Finalizar agentes
-    await shelter1.stop()
-    await shelter2.stop()
-    for vehicle in supply_vehicles:
-        await vehicle.stop()
-    await depot.stop()
+    await responder.stop()
+    await responder2.stop()
+    await civilian1.stop()
+    #await civilian2.stop()
+
+    #await shelter2.stop()
+    #for vehicle in supply_vehicles:
+    #    await vehicle.stop()
+    #await depot.stop()
 
 
 
