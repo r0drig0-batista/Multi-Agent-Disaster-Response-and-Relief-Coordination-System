@@ -2,154 +2,138 @@ import asyncio
 from agentes import ResponderAgent, CivilianAgent, SupplyVehicleAgent, ShelterAgent, DepotAgent
 from ambiente import Environment
 import pygame
+import random
+import time
+
+async def spawn_civilians(env, civilians, responders):
+    civilian_count = len(civilians)
+
+    while True:
+        await asyncio.sleep(random.randint(10, 20))  # Intervalo aleatório entre 10 e 20 segundos
+
+        # Encontrar células disponíveis
+        available_positions = [
+            (i, j)
+            for i in range(env.city_size)
+            for j in range(env.city_size)
+            if env.city_map[i][j] == 1
+        ]
+
+        if not available_positions:
+            print("Nenhuma posição disponível para criar novos civilians.")
+            continue
+
+        # Escolher uma posição aleatória
+        new_position = random.choice(available_positions)
+
+        # Criar um novo civilian
+        civilian_count += 1
+        civilian_jid = f"civilian{civilian_count}@localhost"
+        env.move_agent(new_position, new_position, agent_type=2)
+        new_civilian = CivilianAgent(civilian_jid, "password", new_position, 2, len(responders))
+        new_civilian.grau_urgencia = random.randint(1, 5)  # Grau de urgência aleatório
+        await new_civilian.start()
+        civilians.append(new_civilian)
+
+        print(f"Novo civilian criado: {civilian_jid} na posição {new_position}.")
+
+
 
 async def main():
     # Inicializar o ambiente
     env = Environment(size=10)
     env.draw_city()  # Desenhar mapa inicial
 
-    responder_position = [7, 8]  # Posição inicial do depósito
-    env.move_agent(responder_position,responder_position,agent_type=3)
-    responder = ResponderAgent("responder1@localhost", "password", responder_position, 3, env)
-    await responder.start()
+    env.add_buildings((2, 3))
+    env.add_buildings((4, 8))
+    env.add_buildings((7, 2))
+    env.add_buildings((5, 6))
 
-    responder_position2 = [4, 5]  # Posição inicial do depósito
-    env.move_agent(responder_position2, responder_position2, agent_type=3)
-    responder2 = ResponderAgent("responder2@localhost", "password", responder_position2, 3, env)
-    await responder2.start()
+    # Criar Responders
+    responders = []
+    responder_positions = [[3, 3], [5, 5]]
+    for i, pos in enumerate(responder_positions, start=1):
+        env.move_agent(pos, pos, agent_type=3)
+        responder = ResponderAgent(f"responder{i}@localhost", "password", pos, len(responder_positions), env)
+        await responder.start()
+        responders.append(responder)
 
-    responder_position3 = [5, 5]  # Posição inicial do depósito
-    env.move_agent(responder_position3, responder_position3, agent_type=3)
-    responder3 = ResponderAgent("responder3@localhost", "password", responder_position3, 3, env)
-    await responder3.start()
+    # Criar Civis
+    civilians = []
+    civilian_positions = [[4, 4]]
+    for i, pos in enumerate(civilian_positions, start=1):
+        env.move_agent(pos, pos, agent_type=2)
+        civilian = CivilianAgent(f"civilian{i}@localhost", "password", pos, 2, len(responder_positions))
+        civilian.grau_urgencia = random.randint(1, 5)  # Grau de urgência aleatório
+        await civilian.start()
+        civilians.append(civilian)
 
-    civilian_position1 = [2, 4]  # Posição inicial do depósito
-    env.move_agent(civilian_position1, civilian_position1, agent_type=2)
-    civilian1 = CivilianAgent("civilian1@localhost", "password", civilian_position1,2,3)
-    await civilian1.start()
-
-    #await asyncio.sleep(5)
-    civilian_position2 = [4, 2]  # Posição inicial do depósito
-    env.move_agent(civilian_position2, civilian_position2, agent_type=2)
-    civilian2 = CivilianAgent("civilian2@localhost", "password", civilian_position2,2,3)
-    await civilian2.start()
-
-    civilian_position3 = [6, 7]  # Posição inicial do depósito
-    env.move_agent(civilian_position3, civilian_position3, agent_type=2)
-    civilian3 = CivilianAgent("civilian3@localhost", "password", civilian_position3, 2, 3)
-    await civilian3.start()
-
-    shelter1_position = [7, 7]
-    env.move_agent(shelter1_position, shelter1_position, agent_type=5)
-    shelter1 = ShelterAgent("shelter1@localhost", "password", shelter1_position, 3)
-    await shelter1.start()
-
-    shelter2_position = [1, 1]
-    env.move_agent(shelter2_position, shelter2_position, agent_type=5)
-    shelter2 = ShelterAgent("shelter2@localhost", "password", shelter2_position, 3)
-    await shelter2.start()
-
-    '''
-    # Criar veículos de suprimento
-    supply_vehicle_positions = [[0, 0], [0, 0], [0, 0], [0, 0]]
+    # Criar Veículos de Suprimentos
     supply_vehicles = []
-
-    # Criar os veículos com os recursos especificados
+    supply_vehicle_positions = [[0, 0], [0, 0], [0, 0], [0, 0]]
     initial_resources = [
-        {"agua_comida": 200,  "medicamentos": 50,  "combustivel": 100},  # Veículo 1
-        {"agua_comida": 200,  "medicamentos": 50,  "combustivel": 100},  # Veículo 2
-        {"agua_comida": 200,  "medicamentos": 50,  "combustivel": 100},
-        {"agua_comida": 200,  "medicamentos": 50,  "combustivel": 100}
+        {"agua_comida": 200, "medicamentos": 50, "combustivel": 100},
+        {"agua_comida": 200, "medicamentos": 50, "combustivel": 100},
+        {"agua_comida": 200, "medicamentos": 50, "combustivel": 100},
+        {"agua_comida": 200, "medicamentos": 50, "combustivel": 100},
     ]
+    for i, (pos, resources) in enumerate(zip(supply_vehicle_positions, initial_resources), start=1):
+        env.move_agent(pos, pos, agent_type=7)
+        vehicle = SupplyVehicleAgent(f"supply_vehicle{i}@localhost", "password", pos, env)
+        vehicle.recursos = resources
+        await vehicle.start()
+        supply_vehicles.append(vehicle)
 
-    for i, (position, resources) in enumerate(zip(supply_vehicle_positions, initial_resources), start=1):
-        vehicle_jid = f"supply_vehicle{i}@localhost"
-        env.move_agent(position, position, agent_type=7)
-        supply_vehicle = SupplyVehicleAgent(vehicle_jid, "password", position, env)
+    shelters = []
+    shelter_positions = [[1, 1], [9, 0], [6, 6]]  # Posições predefinidas para os shelters
+    for i, pos in enumerate(shelter_positions, start=1):
+        env.move_agent(pos, pos, agent_type=5)  # Supondo que o tipo de agente para shelters é 5
+        shelter = ShelterAgent(f"shelter{i}@localhost", "password", pos)
+        await shelter.start()
+        shelters.append(shelter)
 
-        # Configurar os recursos iniciais do veículo
-        supply_vehicle.recursos = resources
+    #print(f"Total de shelters criados: {len(shelters)}")
 
-        await supply_vehicle.start()
-        supply_vehicles.append(supply_vehicle)
-
-    # Criar o depósito central
-    depot_position = [0, 0]  # Posição inicial do depósito
+    # Criar Depósito
+    depot_position = [0, 0]
     vehicle_max_resources = {"agua_comida": 200, "medicamentos": 100, "combustivel": 100}
     env.move_agent(depot_position, depot_position, agent_type=9)
     depot = DepotAgent("depot@localhost", "password", depot_position, vehicle_max_resources)
     await depot.start()
 
-    # Criar os abrigos com capacidades e posições diferentes
-    shelter1_position = [7, 7]
-    env.move_agent(shelter1_position, shelter1_position, agent_type=5)
-    shelter1 = ShelterAgent("shelter1@localhost", "password", shelter1_position, len(supply_vehicle_positions))
-    await shelter1.start()
-
-    shelter2_position = [5, 5]
-    env.move_agent(shelter2_position, shelter2_position, agent_type=5)
-    shelter2 = ShelterAgent("shelter2@localhost", "password", shelter2_position, len(supply_vehicle_positions))
-    await shelter2.start()
-
-    # Atualiza o mapa para incluir os abrigos
-    #env.move_agent(shelter1_position, shelter1_position, agent_type=5)  # Representa o Shelter 1
-    #env.move_agent(shelter2_position, shelter2_position, agent_type=5)  # Representa o Shelter 2
-
-    # Simulação
-    print("\nMapa inicial da cidade:")
-    env.print_city_map()
-
-    print("\nIniciando simulação de 60 segundos...")
-
-    # Evento 1: Abrigos esgotam seus recursos
-    await asyncio.sleep(5)
-    print("\n[Evento] Shelter 1 esgota seus recursos.")
-    shelter1.pessoas=50
-    shelter2.pessoas = 30
-    print("Shelter 1 agora sem água e comida.")
-
-    #await asyncio.sleep(12)
-    print("\n[Evento] Shelter 2 esgota seus recursos.")
-    #shelter2.agua_comida = 0
-    #shelter2.medicamentos = 0
-    print("Shelter 2 agora sem água e medicamentos.")
-
-    # Espera até o fim da simulação
-    #await asyncio.sleep(50)
-    print("\nFim da simulação de 60 segundos")
-
-    print("\nEstado final do mapa:")
-    env.print_city_map()
-    '''
-
+    # Loop principal do jogo
     async def game_loop():
-        while True:
+        await spawn_civilians(env, civilians, responders)
+
+        start_time = time.time()  # Marca o tempo de início do loop
+        duration = 3 * 60  # Duração de 3 minutos (em segundos)
+
+        while time.time() - start_time < duration:  # Verifica se ainda está dentro do tempo permitido
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     pygame.quit()
                     return
 
-            await asyncio.sleep(0.1)  # Pequeno delay para não travar o programa
+            # Simular derrocadas aleatórias
+            if random.random() < 0.05:
+                env.cause_landslides()
 
-    # Rodar a simulação e o loop do jogo
-    await asyncio.gather(
-        game_loop(),
-        asyncio.sleep(60)  # Simulação principal
-    )
+            await asyncio.sleep(0.1)  # Intervalo curto para atualizar o loop
 
-    # Finalizar agentes
-    await responder.stop()
-    await responder2.stop()
-    await civilian1.stop()
-    await shelter1.stop()
-    #await civilian2.stop()
+        print("Fim do tempo de simulação. Encerrando agentes e saindo.")
 
-    #await shelter2.stop()
-    #for vehicle in supply_vehicles:
-    #    await vehicle.stop()
-    #await depot.stop()
+    # Rodar o loop do jogo
+    await asyncio.gather(game_loop())
 
-
+    for responder in responders:
+        await responder.stop()
+    for vehicle in supply_vehicles:
+        await vehicle.stop()
+    for civilian in civilians:
+        await civilian.stop()
+    for shelter in shelters:
+        await shelter.stop()
+    await depot.stop()
 
 
 if __name__ == "__main__":

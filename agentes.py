@@ -136,17 +136,27 @@ class ResponderAgent(Agent):
                     print(
                         f"{self.agent.jid}: Outro responder mais próximo foi escolhido para {best_candidate['civilian_id']}."
                     )
-                    #print("CANDIDDSDADSA: ",self.agent.candidates)
                     # Remove o candidato rejeitado
                     self.agent.candidates.remove(best_candidate)
                     print(f"{self.agent.jid}: Reavaliando candidatos restantes: {self.agent.candidates}")
                     continue  # Volta para o próximo candidato
-                else:
-                    print(f"{self.agent.jid}: Atendendo {best_candidate['civilian_id']}.")
-                    self.agent.current_request = best_candidate
-                    self.agent.add_behaviour(self.agent.ProcessingBehaviour())
-                    self.agent.ocupado=True
-                    break
+
+                # Verifica se há empate entre os candidatos restantes
+                empate_candidatos = [
+                    c for c in self.agent.candidates if c["distance"] == best_candidate["distance"]
+                ]
+
+                if len(empate_candidatos) > 1:  # Caso de empate
+                    print(f"{self.agent.jid}: Empate detectado entre candidatos. Resolvendo aleatoriamente.")
+                    best_candidate = random.choice(empate_candidatos)
+                    print(f"{self.agent.jid}: Escolhido aleatoriamente: {best_candidate['civilian_id']}.")
+
+                # Atende o melhor candidato (após lidar com "mais próximo" ou empate)
+                print(f"{self.agent.jid}: Atendendo {best_candidate['civilian_id']}.")
+                self.agent.current_request = best_candidate
+                self.agent.add_behaviour(self.agent.ProcessingBehaviour())
+                self.agent.ocupado = True
+                break
 
             # Finaliza negociação
             print(f"{self.agent.jid}: Negociação finalizada.")
@@ -298,6 +308,7 @@ class ResponderAgent(Agent):
             # Decide se responde com "mais próximo" ou "proposta rejeitada"
             if my_distance is not None and my_distance < distance:
                 response = "mais próximo"
+
             else:
                 response = "proposta rejeitada"
 
@@ -379,12 +390,14 @@ class CivilianAgent(Agent):
 
     class UpdateStateBehaviour(CyclicBehaviour):
         async def run(self):
-            if self.agent.attended:
+            if self.agent.attended or self.agent.in_progress:
                 return  # Civilian já foi atendido
 
+            self.agent.in_progress = True
             # Aguarda uma mensagem do responder
             msg = await self.receive(timeout=5)
             if not msg or msg.get_metadata("performative") != "inform":
+                self.agent.in_progress = False
                 return  # Ignora mensagens irrelevantes
 
             if msg.body == "in_progress":
@@ -413,6 +426,7 @@ class SupplyVehicleAgent(Agent):
         super().__init__(jid, password)
         self.position = position
         self.environment = environment
+        self.combustivel_consumido = 0
 
         # Estoque inicial de recursos no veículo
         self.recursos = {
@@ -669,6 +683,7 @@ class SupplyVehicleAgent(Agent):
                 self.update_position(next_position)
                 print(f"{self.jid} chegou ao civilian.")
                 if self.recursos["combustivel"] > 0:
+                    self.combustivel_consumido += 1
                     self.recursos["combustivel"]-=1
 
             elif self.environment.is_road_free(next_position):
@@ -676,6 +691,7 @@ class SupplyVehicleAgent(Agent):
                 self.update_position(next_position)
                 print(f"{self.jid} movido para {next_position}.")
                 if self.recursos["combustivel"] > 0:
+                    self.combustivel_consumido += 1
                     self.recursos["combustivel"]-=1
 
             else:
