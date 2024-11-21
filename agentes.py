@@ -1121,6 +1121,8 @@ class DepotAgent(Agent):
         super().__init__(jid, password)
         self.position = position
         self.vehicle_max_resources = vehicle_max_resources
+        self.recursos_distribuidos = {"medicamentos": 0, "agua_comida": 0}
+
 
     class HandleRefillRequestsBehaviour(CyclicBehaviour):
         async def run(self):
@@ -1140,6 +1142,9 @@ class DepotAgent(Agent):
                         quantidade_abastecida = maximo - atual
                         if quantidade_abastecida > 0:
                             recursos_abastecidos[recurso] = quantidade_abastecida
+
+                            if recurso in self.agent.recursos_distribuidos:
+                                self.agent.recursos_distribuidos[recurso] += quantidade_abastecida
 
                     print(f"Depot irá reabastecer {vehicle_jid}: {recursos_abastecidos}")
 
