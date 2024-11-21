@@ -47,11 +47,11 @@ async def main():
     env.add_buildings((2, 3))
     env.add_buildings((4, 8))
     env.add_buildings((7, 2))
-    env.add_buildings((5, 6))
+    env.add_buildings((5, 5))
 
     # Criar Responders
     responders = []
-    responder_positions = [[3, 3], [5, 5]]
+    responder_positions = [[2, 6], [5, 2]]
     for i, pos in enumerate(responder_positions, start=1):
         env.move_agent(pos, pos, agent_type=3)
         responder = ResponderAgent(f"responder{i}@localhost", "password", pos, len(responder_positions), env)
@@ -60,7 +60,7 @@ async def main():
 
     # Criar Civis
     civilians = []
-    civilian_positions = [[4, 4]]
+    civilian_positions = [[4, 4], [3, 8]]
     for i, pos in enumerate(civilian_positions, start=1):
         env.move_agent(pos, pos, agent_type=2)
         civilian = CivilianAgent(f"civilian{i}@localhost", "password", pos, 2, len(responder_positions))

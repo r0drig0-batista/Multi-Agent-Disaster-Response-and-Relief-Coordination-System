@@ -132,31 +132,62 @@ class ResponderAgent(Agent):
                 #print("CANDIDDSDADSA: ", self.agent.candidates)
 
                 # Avalia as respostas
+                empates = [r for r in replies if "empate" in r]
+                if len(empates) > 0 and len(empates) == len(replies):  # Todos estão em empate
+                    print(f"{self.agent.jid}: Empate detectado entre responders. Resolvendo aleatoriamente.")
+
+                    # Gere um número aleatório e compartilhe com outros responders
+                    my_random = random.randint(1, 100)
+                    print(f"{self.agent.jid}: Meu valor aleatório para desempate: {my_random}")
+
+                    # Envia mensagem de desempate para outros responders
+                    for i in range(1, self.agent.max_responders + 1):
+                        responder_jid = f"responder{i}@localhost"
+                        if responder_jid != str(self.agent.jid):  # Evita enviar para si mesmo
+                            msg = Message(to=responder_jid)
+                            msg.body = f"desempate {my_random} {best_candidate['civilian_id']}"
+                            msg.set_metadata("performative", "resolve-tie")
+                            await self.send(msg)
+
+                    # Aguarda mensagens de desempate
+                    desempate_replies = []
+                    start_time = asyncio.get_event_loop().time()
+                    while asyncio.get_event_loop().time() - start_time < 5:  # 5 segundos para receber respostas
+                        reply = await self.receive(timeout=1)
+                        if reply and reply.get_metadata("performative") == "resolve-tie":
+                            desempate_replies.append(int(reply.body.split()[1]))
+                            print(f"{self.agent.jid} recebeu valor de desempate: {reply.body}")
+
+                    # Verifica se o responder venceu o desempate
+                    all_randoms = desempate_replies + [my_random]
+                    if my_random == max(all_randoms):  # Apenas o maior número atende
+                        print(f"{self.agent.jid}: Venci o desempate. Atendendo {best_candidate['civilian_id']}.")
+                        self.agent.current_request = best_candidate
+                        self.agent.add_behaviour(self.agent.ProcessingBehaviour())
+                        self.agent.ocupado = True
+                        break
+                    else:
+                        print(f"{self.agent.jid}: Perdi o desempate. Não atenderei {best_candidate['civilian_id']}.")
+                        self.agent.candidates.remove(best_candidate)
+                        continue  # Tenta o próximo candidato
+
+                # Avalia as respostas
                 if any("mais próximo" in r for r in replies):
                     print(
                         f"{self.agent.jid}: Outro responder mais próximo foi escolhido para {best_candidate['civilian_id']}."
                     )
+                    #print("CANDIDDSDADSA: ",self.agent.candidates)
                     # Remove o candidato rejeitado
                     self.agent.candidates.remove(best_candidate)
                     print(f"{self.agent.jid}: Reavaliando candidatos restantes: {self.agent.candidates}")
                     continue  # Volta para o próximo candidato
 
-                # Verifica se há empate entre os candidatos restantes
-                empate_candidatos = [
-                    c for c in self.agent.candidates if c["distance"] == best_candidate["distance"]
-                ]
-
-                if len(empate_candidatos) > 1:  # Caso de empate
-                    print(f"{self.agent.jid}: Empate detectado entre candidatos. Resolvendo aleatoriamente.")
-                    best_candidate = random.choice(empate_candidatos)
-                    print(f"{self.agent.jid}: Escolhido aleatoriamente: {best_candidate['civilian_id']}.")
-
-                # Atende o melhor candidato (após lidar com "mais próximo" ou empate)
-                print(f"{self.agent.jid}: Atendendo {best_candidate['civilian_id']}.")
-                self.agent.current_request = best_candidate
-                self.agent.add_behaviour(self.agent.ProcessingBehaviour())
-                self.agent.ocupado = True
-                break
+                else:
+                    print(f"{self.agent.jid}: Atendendo {best_candidate['civilian_id']}.")
+                    self.agent.current_request = best_candidate
+                    self.agent.add_behaviour(self.agent.ProcessingBehaviour())
+                    self.agent.ocupado=True
+                    break
 
             # Finaliza negociação
             print(f"{self.agent.jid}: Negociação finalizada.")
@@ -308,6 +339,9 @@ class ResponderAgent(Agent):
             # Decide se responde com "mais próximo" ou "proposta rejeitada"
             if my_distance is not None and my_distance < distance:
                 response = "mais próximo"
+
+            if my_distance == distance:
+                response = "empate"
 
             else:
                 response = "proposta rejeitada"
