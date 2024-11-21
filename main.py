@@ -18,10 +18,10 @@ async def main():
     responder2 = ResponderAgent("responder2@localhost", "password", responder_position2, 3, env)
     await responder2.start()
 
-    #responder_position3 = [5, 5]  # Posição inicial do depósito
-    #env.move_agent(responder_position3, responder_position3, agent_type=3)
-    #responder3 = ResponderAgent("responder3@localhost", "password", responder_position3, 3, env)
-    #await responder3.start()
+    responder_position3 = [5, 5]  # Posição inicial do depósito
+    env.move_agent(responder_position3, responder_position3, agent_type=3)
+    responder3 = ResponderAgent("responder3@localhost", "password", responder_position3, 3, env)
+    await responder3.start()
 
     civilian_position1 = [2, 4]  # Posição inicial do depósito
     env.move_agent(civilian_position1, civilian_position1, agent_type=2)
@@ -34,17 +34,17 @@ async def main():
     civilian2 = CivilianAgent("civilian2@localhost", "password", civilian_position2,2,3)
     await civilian2.start()
 
-    #civilian_position3 = [6, 7]  # Posição inicial do depósito
-    #env.move_agent(civilian_position3, civilian_position3, agent_type=2)
-    #civilian3 = CivilianAgent("civilian3@localhost", "password", civilian_position3, 2, 3)
-    #await civilian3.start()
+    civilian_position3 = [6, 7]  # Posição inicial do depósito
+    env.move_agent(civilian_position3, civilian_position3, agent_type=2)
+    civilian3 = CivilianAgent("civilian3@localhost", "password", civilian_position3, 2, 3)
+    await civilian3.start()
 
     shelter1_position = [7, 7]
     env.move_agent(shelter1_position, shelter1_position, agent_type=5)
     shelter1 = ShelterAgent("shelter1@localhost", "password", shelter1_position, 3)
     await shelter1.start()
 
-    shelter2_position = [5, 7]
+    shelter2_position = [1, 1]
     env.move_agent(shelter2_position, shelter2_position, agent_type=5)
     shelter2 = ShelterAgent("shelter2@localhost", "password", shelter2_position, 3)
     await shelter2.start()

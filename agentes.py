@@ -195,6 +195,7 @@ class ResponderAgent(Agent):
             print(f"{self.agent.jid}: Solicitando disponibilidade de Shelters para transportar {civilian_id}.")
             # Envia mensagem para todos os Shelters
             shelter_replies = []
+            shelter_positions = {}
             for i in range(1, self.agent.max_responders + 1):  # Substitua por max_shelters ou similar
                 shelter_jid = f"shelter{i}@localhost"
                 shelter_msg = Message(to=shelter_jid)
@@ -209,6 +210,8 @@ class ResponderAgent(Agent):
                 reply = await self.receive(timeout=1)
                 if reply and reply.get_metadata("performative") == "inform":
                     shelter_replies.append(reply.body)
+                    shelter_position = eval(" ".join(reply.body.split()[1:3]))  # Extrai a posição do Shelter
+                    shelter_positions[tuple(shelter_position)] = str(reply.sender)  # Mapeia a posição ao JID
                     print(f"Resposta recebida de {reply.sender}: {reply.body}")
 
             if not shelter_replies:
@@ -222,6 +225,7 @@ class ResponderAgent(Agent):
             for shelter_info in shelter_replies:
                 parts = shelter_info.split()  # Supõe que posição está no corpo da mensagem
                 shelter_position = eval(" ".join(parts[1:3]))
+
 
                 distance = abs(self.agent.position[0] - shelter_position[0]) + abs(
                     self.agent.position[1] - shelter_position[1])
@@ -239,6 +243,7 @@ class ResponderAgent(Agent):
                 return
 
             best_shelter = random.choice(best_shelters)
+            best_shelter_jid = shelter_positions[tuple(best_shelter)]
             print(f"{self.agent.jid}: Levando {civilian_id} para o Shelter em {best_shelter}.")
 
             # Calcula o caminho até o Shelter
@@ -251,6 +256,14 @@ class ResponderAgent(Agent):
             # Segue o caminho até o Shelter
             await self.agent.follow_path(path_to_shelter, tuple(best_shelter))
             print(f"{self.agent.jid}: Chegou ao Shelter em {best_shelter}. Transporte concluído.")
+
+            # Envia confirmação ao Shelter
+            shelter_msg = Message(to=str(best_shelter_jid))  # 'jid' deve estar no dicionário do Shelter
+            shelter_msg.body = "confirm"
+            shelter_msg.set_metadata("performative", "inform")
+            shelter_msg.set_metadata("origin", "responder")  # Indica que a origem é um responder
+            await self.send(shelter_msg)
+            print(f"{self.agent.jid}: Confirmação enviada ao Shelter {best_shelter_jid}.")
 
             # Atualiza o estado e limpa o pedido atual
             self.agent.current_request = None
@@ -841,6 +854,10 @@ class ShelterAgent(Agent):
                 reply.set_metadata("performative", "inform")
                 await self.send(reply)
                 print(f"{self.agent.jid}: Respondeu a {msg.sender} com posição {self.agent.position}.")
+
+            if msg and msg.get_metadata("performative") == "inform" and msg.get_metadata("origin") == "responder":
+                self.agent.pessoas += 1
+                print(f"{self.agent.jid}: Pessoa adicionada. Total de pessoas: {self.agent.pessoas}.")
 
             if msg:
                 if msg.get_metadata("performative") == "response":
